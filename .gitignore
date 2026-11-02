@@ -1,0 +1,5 @@
+*.o
+*.exe
+*.ini
+_preview/
+_render/

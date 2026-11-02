@@ -1,0 +1,21 @@
+#pragma once
+#define IDI_APP      1
+#define IDD_CLOCK    101
+#define IDC_SEARCH   1001
+#define IDC_LIST     1002
+#define IDC_LABEL    1003
+#define IDC_PREVIEW  1004
+#define IDC_TASKBAR  1005
+#define IDD_ALARM    102
+#define IDD_JUMP     103
+#define IDC_ALABEL   1010
+#define IDC_ATIME    1011
+#define IDC_ACLOCK   1012
+#define IDC_AREPEAT  1013
+#define IDC_ADATE    1014
+#define IDC_APREVIEW 1015
+#define IDC_AENABLED 1016
+#define IDC_JCLOCK   1020
+#define IDC_JTIME    1021
+#define IDC_JDAY     1022
+#define IDC_JPREVIEW 1023
