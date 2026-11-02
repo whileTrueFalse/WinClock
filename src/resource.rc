@@ -1,3 +1,4 @@
+#pragma code_page(65001)
 #include <windows.h>
 #include "resource.h"
 
@@ -58,9 +59,160 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 168, 100, 52, 14
 END
 
+IDD_INPUT DIALOGEX 0, 0, 300, 96
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "WinClock"
+BEGIN
+    LTEXT           "", IDC_IPROMPT, 10, 8, 280, 40
+    EDITTEXT        IDC_IEDIT, 10, 50, 280, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON   "OK", IDOK, 182, 74, 52, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 238, 74, 52, 14
+END
+
+IDD_REPORT DIALOGEX 0, 0, 420, 260
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "WinClock"
+BEGIN
+    EDITTEXT        IDC_RTEXT, 8, 8, 404, 222, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    PUSHBUTTON      "Copy", IDC_RCOPY, 290, 238, 60, 14
+    DEFPUSHBUTTON   "Close", IDCANCEL, 354, 238, 58, 14
+END
+
+IDD_CARD DIALOGEX 0, 0, 380, 236
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "Meeting card"
+BEGIN
+    LTEXT           "Title:", -1, 10, 10, 30, 10
+    EDITTEXT        IDC_CTITLE, 42, 8, 200, 14, ES_AUTOHSCROLL
+    LTEXT           "Length:", -1, 252, 10, 30, 10
+    COMBOBOX        IDC_CDUR, 284, 8, 86, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    EDITTEXT        IDC_CTEXT, 10, 30, 360, 170, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    PUSHBUTTON      "Copy text", IDC_CCOPY, 10, 212, 70, 14
+    PUSHBUTTON      "Save .ics invite…", IDC_CICS, 84, 212, 90, 14
+    DEFPUSHBUTTON   "Close", IDCANCEL, 318, 212, 52, 14
+END
+
+IDD_PERSON DIALOGEX 0, 0, 300, 232
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "Person, hours & holidays"
+BEGIN
+    LTEXT           "Person (optional):", -1, 10, 10, 80, 10
+    EDITTEXT        IDC_PNAME, 96, 8, 194, 14, ES_AUTOHSCROLL
+    LTEXT           "Shown as ""Alex · New York"". Leave empty for a plain city clock.", -1, 96, 24, 194, 10
+    LTEXT           "Working hours:", -1, 10, 44, 80, 10
+    COMBOBOX        IDC_PSTART, 96, 42, 90, 200, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "to", -1, 190, 44, 10, 10
+    COMBOBOX        IDC_PEND, 200, 42, 90, 200, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Days off:", -1, 10, 64, 80, 10
+    AUTOCHECKBOX    "Sun", IDC_POFF0, 96, 64, 28, 10
+    AUTOCHECKBOX    "Mon", 1071, 124, 64, 28, 10
+    AUTOCHECKBOX    "Tue", 1072, 152, 64, 28, 10
+    AUTOCHECKBOX    "Wed", 1073, 180, 64, 28, 10
+    AUTOCHECKBOX    "Thu", 1074, 208, 64, 28, 10
+    AUTOCHECKBOX    "Fri", 1075, 236, 64, 26, 10
+    AUTOCHECKBOX    "Sat", 1076, 262, 64, 28, 10
+    LTEXT           "Public holidays:", -1, 10, 86, 80, 10
+    COMBOBOX        IDC_PCC, 96, 84, 194, 200, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Note:", -1, 10, 108, 80, 10
+    EDITTEXT        IDC_PNOTE, 96, 106, 194, 14, ES_AUTOHSCROLL
+    LTEXT           "e.g. ""on leave"" or ""prefers mornings""", -1, 96, 122, 194, 10
+    LTEXT           "Away until:", -1, 10, 142, 80, 10
+    EDITTEXT        IDC_PAWAY, 96, 140, 80, 14, ES_AUTOHSCROLL
+    LTEXT           "YYYY-MM-DD, optional", -1, 182, 142, 108, 10
+    AUTOCHECKBOX    "Show this clock's hour in the tray icon", IDC_PTRAY, 10, 166, 280, 10
+    LTEXT           "Status, the timeline, the meeting finder and the fairness report all use these hours, days off, holidays and away dates.", -1, 10, 182, 280, 20
+    DEFPUSHBUTTON   "OK", IDOK, 182, 210, 52, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 238, 210, 52, 14
+END
+
+IDD_SET_GENERAL DIALOGEX 0, 0, 300, 210
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "General"
+BEGIN
+    LTEXT           "Layout:", -1, 10, 12, 70, 10
+    COMBOBOX        IDC_SG_LAYOUT, 90, 10, 200, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Theme:", -1, 10, 32, 70, 10
+    COMBOBOX        IDC_SG_THEME, 90, 30, 200, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Size:", -1, 10, 52, 70, 10
+    COMBOBOX        IDC_SG_SIZE, 90, 50, 70, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Opacity:", -1, 170, 52, 40, 10
+    COMBOBOX        IDC_SG_OPA, 220, 50, 70, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Default working hours:", -1, 10, 72, 80, 10
+    COMBOBOX        IDC_SG_WS, 90, 70, 70, 200, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "to", -1, 166, 72, 10, 10
+    COMBOBOX        IDC_SG_WE, 180, 70, 70, 200, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "24-hour time", IDC_SG_24H, 10, 98, 130, 10
+    AUTOCHECKBOX    "Show seconds", IDC_SG_SECS, 150, 98, 140, 10
+    AUTOCHECKBOX    "Show dates", IDC_SG_DATE, 10, 114, 130, 10
+    AUTOCHECKBOX    "Hourly chime", IDC_SG_CHIME, 150, 114, 140, 10
+    AUTOCHECKBOX    "Start with Windows", IDC_SG_STARTUP, 10, 130, 130, 10
+    AUTOCHECKBOX    "Lock widget position", IDC_SG_LOCK, 150, 130, 140, 10
+    AUTOCHECKBOX    "Keep widget always on top (instead of on the desktop)", IDC_SG_TOP, 10, 146, 280, 10
+    LTEXT           "Shortcuts: Ctrl+Alt+V convert a copied time · Ctrl+Alt+Space command palette · Ctrl+Alt+W show/hide", -1, 10, 172, 280, 20
+END
+
+IDD_SET_CLOCKS DIALOGEX 0, 0, 300, 210
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "Clocks && people"
+BEGIN
+    LTEXT           "", IDC_SC_PROFILE, 10, 6, 280, 10
+    CONTROL         "", IDC_SC_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 10, 18, 280, 150
+    PUSHBUTTON      "Add…", IDC_SC_ADD, 10, 174, 46, 14
+    PUSHBUTTON      "Edit…", IDC_SC_EDIT, 58, 174, 46, 14
+    PUSHBUTTON      "Person && hours…", IDC_SC_PERSON, 106, 174, 76, 14
+    PUSHBUTTON      "Remove", IDC_SC_REMOVE, 184, 174, 46, 14
+    PUSHBUTTON      "↑", IDC_SC_UP, 232, 174, 28, 14
+    PUSHBUTTON      "↓", IDC_SC_DOWN, 262, 174, 28, 14
+    LTEXT           "Double-click a row to set the person, working hours, days off, holidays and away dates.", -1, 10, 194, 280, 10
+END
+
+IDD_SET_TASKBAR DIALOGEX 0, 0, 300, 210
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "Taskbar"
+BEGIN
+    AUTOCHECKBOX    "Show clocks on the taskbar", IDC_ST_SHOW, 10, 10, 280, 10
+    AUTORADIOBUTTON "Show all my clocks", IDC_ST_ALL, 20, 26, 130, 10, WS_GROUP
+    AUTORADIOBUTTON "Only clocks ticked in the Clocks menu", IDC_ST_SEL, 150, 26, 140, 10
+    LTEXT           "Position:", -1, 10, 46, 60, 10
+    AUTORADIOBUTTON "Left edge", IDC_ST_LEFT, 20, 60, 70, 10, WS_GROUP
+    AUTORADIOBUTTON "Right, next to tray", IDC_ST_RIGHT, 92, 60, 90, 10
+    AUTORADIOBUTTON "Custom (drag them)", IDC_ST_CUSTOM, 184, 60, 106, 10
+    AUTOCHECKBOX    "Show city labels", IDC_ST_LABELS, 10, 82, 130, 10, WS_GROUP
+    AUTOCHECKBOX    "One at a time, rotating", IDC_ST_ROTATE, 150, 82, 140, 10
+    AUTOCHECKBOX    "Also on other monitors' taskbars", IDC_ST_ALLMON, 10, 98, 280, 10
+    AUTOCHECKBOX    "Show tray icon", IDC_ST_TRAY, 10, 122, 130, 10
+    AUTOCHECKBOX    "Tray icon shows a city's hour", IDC_ST_TRAYTIME, 150, 122, 140, 10
+    LTEXT           "Hover a taskbar clock to peek at its day. Click for all clocks. If they don't fit side by side, they rotate automatically.", -1, 10, 146, 280, 30
+END
+
+IDD_SET_MORE DIALOGEX 0, 0, 300, 210
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
+FONT 9, "Segoe UI", 400, 0, 0x1
+CAPTION "Calendar && updates"
+BEGIN
+    LTEXT           "Calendar link (.ics) — shows your next meeting and reminds you before it starts:", -1, 10, 10, 280, 10
+    EDITTEXT        IDC_SM_CALURL, 10, 24, 280, 14, ES_AUTOHSCROLL
+    AUTOCHECKBOX    "Show next meeting", IDC_SM_CALON, 10, 44, 110, 10
+    LTEXT           "Reminder:", -1, 130, 45, 40, 10
+    COMBOBOX        IDC_SM_WARN, 172, 42, 118, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_SM_CALSTATUS, 10, 60, 280, 10
+    LTEXT           "Google: calendar settings → ""Secret address in iCal format"". Outlook: Calendar settings → Shared calendars → Publish → ICS. The link is stored only on this PC and fetched every 15 minutes.", -1, 10, 74, 280, 30
+    AUTOCHECKBOX    "Check GitHub for a new version once a week", IDC_SM_UPD, 10, 116, 200, 10
+    PUSHBUTTON      "Check now", IDC_SM_UPDNOW, 220, 113, 70, 14
+    AUTOCHECKBOX    "Switch profiles automatically (Work during work hours, Personal otherwise)", IDC_SM_AUTOPROF, 10, 138, 280, 10
+    LTEXT           "Nothing is sent anywhere unless you turn on the calendar link or update check.", -1, 10, 162, 280, 20
+END
+
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 2,1,0,0
-PRODUCTVERSION 2,1,0,0
+FILEVERSION 2,2,0,0
+PRODUCTVERSION 2,2,0,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -70,9 +222,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "WinClock"
       VALUE "FileDescription", "WinClock - World clocks for desktop and taskbar"
-      VALUE "FileVersion", "2.1.0"
+      VALUE "FileVersion", "2.2.0"
       VALUE "ProductName", "WinClock"
-      VALUE "ProductVersion", "2.1.0"
+      VALUE "ProductVersion", "2.2.0"
       VALUE "OriginalFilename", "WinClock.exe"
     END
   END

@@ -20,29 +20,49 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 
 | To… | Do this |
 |---|---|
-| Add cities or whole countries | Menu → **Add clocks / countries…** (Ctrl-click to pick several) |
-| Move the widget | Drag it |
-| Change the look | Menu → **Layout** or **Theme** |
+| Add cities or teammates | Menu → **Add clocks / countries…**, or **Settings → Clocks & people** |
+| Do anything quickly | **Ctrl + Alt + Space** opens the command palette (try `3pm est thu`, `add Tokyo`, `theme paper`) |
+| Convert a time you copied | Copy text like "Tue 3pm PST", then press **Ctrl + Alt + V** |
+| Plan a meeting | Scroll over the clocks to move time, or Menu → **Plan** for the fairness check and meeting card |
 | Move the taskbar clocks | Menu → **Taskbar → Position** (left, right or drag) |
-| Plan a meeting | Scroll the mouse wheel over the clocks to move time; middle-click to reset |
-| Set an alarm or countdown | Menu → **Alarms & countdowns** |
+| Change settings | Menu → **Settings…** |
 | Show or hide the widget | **Ctrl + Alt + W** |
 
 ## Features
 
-- Four layouts: **table**, **analog**, **timeline planner** and **compact**
-- Clocks on the desktop, on the taskbar and in a pop-up
-- Shows who is **working**, **free** or **asleep** right now
-- **Find next meeting slot** across all your cities
-- **Jump to a time**, e.g. "3 pm in New York tomorrow"
-- Alarms and countdowns in any time zone, with Windows notifications
-- Seven themes, including light/dark auto
-- Very light: one ~400 KB app, a few MB of memory, near-zero CPU
+**Clocks**
+- Four layouts (table, analog, timeline, compact) on the desktop, the taskbar and in a pop-up
+- All your clocks on the taskbar, on every monitor; hover one for a 24-hour peek
+- Live tray icon that can show the time of any clock
+- Sunrise and sunset for each city; clear "+1 day" / "−1 day" markers
+
+**People**
+- Add teammates with their own working hours and days off
+- A dot shows whether it's safe to message them now
+- Public holidays for 17 countries, built in and offline
+- Out-of-office dates and short notes
+
+**Planning**
+- Command palette and clipboard time converter
+- Meeting card you can copy or save as a calendar invite (.ics)
+- Fairness check: finds the slot that's least painful for everyone over the next 4 weeks
+- Pin important moments with a countdown
+- Daylight-saving warnings before clocks change
+
+**More**
+- Next meeting from your calendar (.ics link) with a join reminder (off by default)
+- Work / Personal profiles that can switch by time of day
+- Share your setup with a short code
+- Optional weekly update check (off by default)
+- Follows Windows high contrast and text size
+- Very light: one small app, a few MB of memory, near-zero CPU
 
 <details>
 <summary>More screenshots</summary>
 
 ![Timeline](docs/timeline.png)
+![Converting a time](docs/convert.png)
+![Taskbar and peek](docs/taskbar.png)
 ![Analog](docs/analog.png)
 ![Compact](docs/compact.png)
 ![Themes](docs/themes.png)
@@ -60,4 +80,8 @@ build.bat
 
 To build the installer, put `WinClock.exe` in `installer\` and run `makensis installer\winclock.nsi` ([NSIS](https://nsis.sourceforge.io)).
 
+Holiday dates for lunar and Islamic holidays are approximate. You can add or correct dates in `WinClock.ini` under `[Holidays]`, e.g. `IN=2027-10-29 Diwali`.
+
 Releases are automatic: raise the number in `VERSION` and push to `main`. GitHub then builds the app and installer and publishes a new release.
+
+Each release also includes ready-made [winget](https://learn.microsoft.com/windows/package-manager/) manifests. To publish to winget, submit them as a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).

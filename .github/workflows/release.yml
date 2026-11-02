@@ -32,14 +32,64 @@ jobs:
       - name: Build WinClock.exe
         working-directory: src
         run: |
+          printf '#pragma once\n#define APP_VERSION L"%s"\n' "${{ steps.ver.outputs.version }}" > version.h
           x86_64-w64-mingw32-windres resource.rc -O coff -o resource.o
           x86_64-w64-mingw32-g++ -std=c++17 -Os -municode -mwindows -static -static-libgcc -static-libstdc++ \
             -ffunction-sections -fdata-sections -Wl,--gc-sections -s main.cpp resource.o -o ../installer/WinClock.exe \
-            -lgdiplus -lcomctl32 -ldwmapi -lwtsapi32 -lshell32 -ladvapi32 -lole32 -lpsapi -lwinmm
+            -lgdiplus -lcomctl32 -ldwmapi -lwtsapi32 -lshell32 -ladvapi32 -lole32 -lpsapi -lwinmm -lwinhttp -lcrypt32 -lcomdlg32
 
       - name: Build installer
         working-directory: installer
         run: makensis -V2 -DVERSION="${{ steps.ver.outputs.version }}" winclock.nsi
+
+      - name: Write winget manifests
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          SHA=$(sha256sum installer/WinClock-Setup.exe | cut -d' ' -f1 | tr 'a-f' 'A-F')
+          mkdir -p winget
+          cat > winget/whileTrueFalse.WinClock.yaml <<YAML
+          PackageIdentifier: whileTrueFalse.WinClock
+          PackageVersion: $V
+          DefaultLocale: en-US
+          ManifestType: version
+          ManifestVersion: 1.6.0
+          YAML
+          cat > winget/whileTrueFalse.WinClock.installer.yaml <<YAML
+          PackageIdentifier: whileTrueFalse.WinClock
+          PackageVersion: $V
+          InstallerType: nullsoft
+          Scope: user
+          InstallModes:
+            - interactive
+            - silent
+          UpgradeBehavior: install
+          Installers:
+            - Architecture: x64
+              InstallerUrl: https://github.com/whileTrueFalse/WinClock/releases/download/v$V/WinClock-Setup.exe
+              InstallerSha256: $SHA
+          ManifestType: installer
+          ManifestVersion: 1.6.0
+          YAML
+          cat > winget/whileTrueFalse.WinClock.locale.en-US.yaml <<YAML
+          PackageIdentifier: whileTrueFalse.WinClock
+          PackageVersion: $V
+          PackageLocale: en-US
+          Publisher: whileTrueFalse
+          PublisherUrl: https://github.com/whileTrueFalse
+          PackageName: WinClock
+          PackageUrl: https://github.com/whileTrueFalse/WinClock
+          License: Proprietary
+          ShortDescription: Tiny world-clock widget for the Windows desktop and taskbar, with a meeting planner.
+          Tags:
+            - clock
+            - world-clock
+            - time-zone
+            - widget
+            - taskbar
+          ManifestType: defaultLocale
+          ManifestVersion: 1.6.0
+          YAML
+          sed -i 's/^          //' winget/*.yaml
 
       - name: Publish release
         if: steps.ver.outputs.exists == 'false'
@@ -52,6 +102,7 @@ jobs:
           files: |
             installer/WinClock-Setup.exe
             installer/WinClock.exe
+            winget/*.yaml
           body: |
             **Install:** download **WinClock-Setup.exe** below, run it and click **Install**. No admin rights are needed.
 
@@ -59,7 +110,11 @@ jobs:
 
             Prefer no installer? Download **WinClock.exe** and run it from any folder.
 
+            The three `.yaml` files are ready-made winget manifests for this version.
+
       - uses: actions/upload-artifact@v4
         with:
           name: WinClock
-          path: installer/*.exe
+          path: |
+            installer/*.exe
+            winget/*.yaml

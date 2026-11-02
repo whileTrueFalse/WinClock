@@ -1,11 +1,11 @@
 ; WinClock installer: per-user, no admin rights needed.
-; Build:  makensis -DVERSION=2.1.0 winclock.nsi   (expects ..\src\app.ico and WinClock.exe next to this file)
+; Build:  makensis -DVERSION=2.2.0 winclock.nsi   (expects ..\src\app.ico and WinClock.exe next to this file)
 Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 
 !ifndef VERSION
-  !define VERSION "2.1.0"
+  !define VERSION "2.2.0"
 !endif
 !define APP      "WinClock"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\WinClock"
