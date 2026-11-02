@@ -59,3 +59,5 @@ build.bat
 ```
 
 To build the installer, put `WinClock.exe` in `installer\` and run `makensis installer\winclock.nsi` ([NSIS](https://nsis.sourceforge.io)).
+
+Releases are automatic: raise the number in `VERSION` and push to `main`. GitHub then builds the app and installer and publishes a new release.
