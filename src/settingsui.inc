@@ -167,13 +167,20 @@ static INT_PTR CALLBACK SetMoreProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     return FALSE;
 }
 
+static void CentreOnCursorMonitor(HWND hwnd) {
+    POINT pt; GetCursorPos(&pt);
+    MONITORINFO mi{ sizeof(mi) }; GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY), &mi);
+    RECT r; GetWindowRect(hwnd, &r); int w = r.right - r.left, h = r.bottom - r.top;
+    SetWindowPos(hwnd, nullptr, (mi.rcWork.left + mi.rcWork.right - w) / 2, (mi.rcWork.top + mi.rcWork.bottom - h) / 2, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+static LRESULT CALLBACK SheetSubclass(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR) {
+    if (msg == WM_SHOWWINDOW && wp) { CentreOnCursorMonitor(hwnd); RemoveWindowSubclass(hwnd, SheetSubclass, id); }
+    else if (msg == WM_NCDESTROY) RemoveWindowSubclass(hwnd, SheetSubclass, id);
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
 static int CALLBACK SheetCallback(HWND hwnd, UINT msg, LPARAM) {
-    if (msg == PSCB_INITIALIZED) {   // centre on the screen under the mouse
-        POINT pt; GetCursorPos(&pt);
-        MONITORINFO mi{ sizeof(mi) }; GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY), &mi);
-        RECT r; GetWindowRect(hwnd, &r); int w = r.right - r.left, h = r.bottom - r.top;
-        SetWindowPos(hwnd, nullptr, (mi.rcWork.left + mi.rcWork.right - w) / 2, (mi.rcWork.top + mi.rcWork.bottom - h) / 2, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-    }
+    // The sheet positions itself after this callback, so centre it just before it is first shown.
+    if (msg == PSCB_INITIALIZED) SetWindowSubclass(hwnd, SheetSubclass, 0x5E7, 0);
     return 0;
 }
 static void SettingsWindow(int startPage = 0) {
