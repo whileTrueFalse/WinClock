@@ -74,7 +74,7 @@ static int ResolveTheme(int t) {
 static ThemeC GetTheme(int t) {
     switch (t) {
     case T_SNOW:  // paper
-        return { A(0xFFF5F6FF, 0xF7), A(ELECTRIC, 0x40), 0xFFC3C9EE, NAVY, 0xFF5C6594, 0xFFDDE1F7, 0xFFE2E6FF,
+        return { A(0xFFF5F6FF, 0xF7), A(ELECTRIC, 0x40), 0xFFC3C9EE, NAVY, 0xFF4A537F, 0xFFDDE1F7, 0xFFE2E6FF,
                  0xFFE5137A, 0xFF4B67F5, 0xFFFFFFFF, 0xFFFFFFFF, NAVY, SNOW, PINK, false };
     case T_PINK:  // synthwave
         return { A(0xFF150A26, 0xF5), A(PINK, 0x45), 0xFF4A2468, 0xFFFCEAF5, 0xFFB79AD0, 0xFF2A1440, 0xFF2A1446,
@@ -89,7 +89,7 @@ static ThemeC GetTheme(int t) {
         return { 0x01000000, 0, A(SNOW, 0x45), SNOW, 0xFFD0D6F5, A(SNOW, 0x22), A(ELECTRIC, 0x40),
                  PINK, ELECTRIC, NAVY, A(NAVY, 0x9A), A(NAVY, 0xB0), SNOW, PINK, true };
     default:      // terminal
-        return { A(NAVY, 0xF6), A(ELECTRIC, 0x30), 0xFF2B3266, SNOW, 0xFF8A92C2, 0xFF1E2550, 0xFF1A2152,
+        return { A(NAVY, 0xF6), A(ELECTRIC, 0x30), 0xFF2B3266, SNOW, 0xFFA9B1DC, 0xFF1E2550, 0xFF1A2152,
                  PINK, ELECTRIC, NAVY, 0xFF11163A, 0xFFE6E8FF, NAVY, PINK, false };
     }
 }
@@ -109,7 +109,7 @@ struct Settings {
     bool h24 = false, secs = true, date = true;
     int zmode = Z_DESKTOP; bool locked = false, clickThrough = false;
     int x = INT_MIN, y = INT_MIN; bool visible = true;
-    bool tbShow = true, tbRotate = false, tbLabels = true; int tbOffset = -1;
+    bool tbShow = true, tbRotate = false, tbLabels = true, trayIcon = true; int tbOffset = -1, tbAnchor = 0;
     int workStart = 9, workEnd = 18, cols = 3, flyLayout = L_ANALOG;
     bool hotkey = true, chime = false;
 };
@@ -129,6 +129,7 @@ struct View {
     RECT tlBar{}; bool tlHover = false; int tlMin = 0;   // timeline hover offset (minutes from now)
     long long key = -1; bool tracking = false;
     Tip tip; RECT flashRc{};
+    BYTE animAlpha = 255; DWORD animStart = 0; int animX = 0, animY = 0, animDX = 0, animDY = 0;
 };
 
 struct Bar {
@@ -437,7 +438,10 @@ static std::wstring AlarmMenuName(int i) {
 }
 static float FooterH(float s) { return NextAlarmIdx() >= 0 ? 28 * s : 0; }
 
+static bool g_trayAdded = false;
+static void AddTrayIcon();
 static void Balloon(const std::wstring& title, const std::wstring& text) {
+    if (!g_trayAdded) { AddTrayIcon(); if (!S.trayIcon) SetTimer(g_main, 5, 12000, nullptr); }
     if (!g_nid.hWnd) return;
     NOTIFYICONDATAW n = g_nid; n.uFlags = NIF_INFO;
     wcsncpy(n.szInfoTitle, title.c_str(), 63); n.szInfoTitle[63] = 0;
@@ -529,6 +533,9 @@ static void LoadSettings() {
     S.tbRotate = _wcsicmp(IniStr(s, L"TaskbarMode", L"all").c_str(), L"rotate") == 0;
     S.tbLabels = IniInt(s, L"TaskbarLabels", 1) != 0;
     S.tbOffset = IniInt(s, L"TaskbarOffset", -1);
+    { std::wstring an = IniStr(s, L"TaskbarAnchor", S.tbOffset >= 0 ? L"custom" : L"right");
+      S.tbAnchor = _wcsicmp(an.c_str(), L"left") == 0 ? 1 : _wcsicmp(an.c_str(), L"custom") == 0 ? 2 : 0; }
+    S.trayIcon = IniInt(s, L"TrayIcon", 1) != 0;
     S.workStart = std::clamp(IniInt(s, L"WorkStart", 9), 0, 23);
     S.workEnd = std::clamp(IniInt(s, L"WorkEnd", 18), 1, 24);
     S.cols = std::clamp(IniInt(s, L"AnalogColumns", 3), 1, 8);
@@ -565,7 +572,7 @@ static void SaveSettings() {
     if (S.x != INT_MIN) { IniPutI(s, L"X", S.x); IniPutI(s, L"Y", S.y); }
     IniPutI(s, L"Visible", S.visible); IniPutI(s, L"Taskbar", S.tbShow);
     IniPut(s, L"TaskbarMode", S.tbRotate ? L"rotate" : L"all"); IniPutI(s, L"TaskbarLabels", S.tbLabels);
-    IniPutI(s, L"TaskbarOffset", S.tbOffset); IniPutI(s, L"WorkStart", S.workStart); IniPutI(s, L"WorkEnd", S.workEnd);
+    IniPutI(s, L"TaskbarOffset", S.tbOffset); IniPut(s, L"TaskbarAnchor", S.tbAnchor == 1 ? L"left" : S.tbAnchor == 2 ? L"custom" : L"right"); IniPutI(s, L"TrayIcon", S.trayIcon); IniPutI(s, L"WorkStart", S.workStart); IniPutI(s, L"WorkEnd", S.workEnd);
     IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HourlyChime", S.chime);
 }
 static void SaveClocks() {
@@ -608,40 +615,61 @@ static void TrimMemory() { SetProcessWorkingSetSize(GetCurrentProcess(), (SIZE_T
 // ---------------------------------------------------------------- drawing primitives
 struct FontE { int fam; int key; G::Font* f; float ascent; };
 static std::vector<FontE*> g_fonts;
-static G::FontFamily* g_fam[3] = {};
-static int g_famStyle[3] = {};
+static G::FontFamily* g_fam[8] = {};
+static int g_famStyle[8] = {};
+static std::wstring g_famName[8];
+static float g_optScale = 1.0f;              // current zoom x DPI scale, used to pick optical sizes
 static G::StringFormat* g_fmt = nullptr;     // typographic, no wrap
 static G::StringFormat* g_fmtEll = nullptr;  // typographic, ellipsis
 
-static void InitFonts() {
-    const wchar_t* names[3][2] = { {L"Cascadia Mono", L"Consolas"}, {L"Cascadia Mono Light", L"Consolas"}, {L"Cascadia Mono SemiBold", L"Consolas"} };
-    for (int i = 0; i < 3; i++) {
-        g_fam[i] = new G::FontFamily(names[i][0]); g_famStyle[i] = G::FontStyleRegular;
-        if (g_fam[i]->GetLastStatus() != G::Ok || !g_fam[i]->IsAvailable()) {
-            delete g_fam[i]; g_fam[i] = new G::FontFamily(names[i][1]);
-            if (i == 2) g_famStyle[i] = G::FontStyleBold;
-            if (g_fam[i]->GetLastStatus() != G::Ok) { delete g_fam[i]; g_fam[i] = G::FontFamily::GenericSansSerif()->Clone(); }
-        }
+struct FamTry { const wchar_t* name; bool bold; };
+static void LoadFam(int i, std::initializer_list<FamTry> tries) {
+    for (auto& t : tries) {
+        auto f = new G::FontFamily(t.name);
+        if (f->GetLastStatus() == G::Ok && f->IsAvailable()) { g_fam[i] = f; g_famStyle[i] = t.bold ? G::FontStyleBold : G::FontStyleRegular; g_famName[i] = t.name; return; }
+        delete f;
     }
+    g_fam[i] = G::FontFamily::GenericSansSerif()->Clone(); g_famStyle[i] = G::FontStyleRegular; g_famName[i] = L"(generic)";
+}
+static void InitFonts() {
+    // Words use the system font, Segoe UI Variable, which ships optical sizes (Small / Text / Display) the way SF Pro does.
+    // Times and numbers use Cascadia Mono: tabular digits that don't jitter as they tick, and the terminal look.
+    LoadFam(0, { { L"Segoe UI Variable Small", false }, { L"Segoe UI", false } });
+    LoadFam(1, { { L"Segoe UI Variable Small Semibold", false }, { L"Segoe UI Semibold", false }, { L"Segoe UI", true } });
+    LoadFam(2, { { L"Segoe UI Variable Text", false }, { L"Segoe UI", false } });
+    LoadFam(3, { { L"Segoe UI Variable Text Semibold", false }, { L"Segoe UI Semibold", false }, { L"Segoe UI", true } });
+    LoadFam(4, { { L"Segoe UI Variable Display", false }, { L"Segoe UI", false } });
+    LoadFam(5, { { L"Segoe UI Variable Display Semibold", false }, { L"Segoe UI Semibold", false }, { L"Segoe UI", true } });
+    LoadFam(6, { { L"Cascadia Mono", false }, { L"Consolas", false } });
+    LoadFam(7, { { L"Cascadia Mono SemiBold", false }, { L"Consolas", true } });
     g_fmt = G::StringFormat::GenericTypographic()->Clone();
     g_fmt->SetFormatFlags(G::StringFormatFlagsNoWrap | G::StringFormatFlagsMeasureTrailingSpaces | G::StringFormatFlagsNoClip);
     g_fmtEll = G::StringFormat::GenericTypographic()->Clone();
     g_fmtEll->SetFormatFlags(G::StringFormatFlagsNoWrap);
     g_fmtEll->SetTrimming(G::StringTrimmingEllipsisCharacter);
 }
-static void FontsGC() { if (g_fonts.size() > 40) { for (auto e : g_fonts) { delete e->f; delete e; } g_fonts.clear(); } }
+static void FontsGC() { if (g_fonts.size() > 60) { for (auto e : g_fonts) { delete e->f; delete e; } g_fonts.clear(); } }
 static void FreeFonts() {
     for (auto e : g_fonts) { delete e->f; delete e; } g_fonts.clear();
     for (auto& f : g_fam) { delete f; f = nullptr; }
     delete g_fmt; delete g_fmtEll; g_fmt = g_fmtEll = nullptr;
 }
-enum { FR = 0, FL = 1, FS = 2 };  // regular, light, semibold
+// FR/FS: system font regular/semibold (optical size picked from the logical size); FM/FMS: monospace for data
+enum { FR = 0, FL = 1, FS = 2, FM = 3, FMS = 4 };
 static FontE* F(int fam, float px) {
+    int idx;
+    if (fam == FM) idx = 6;
+    else if (fam == FMS) idx = 7;
+    else {
+        float logical = px / std::max(0.5f, g_optScale);
+        int opt = logical < 12.5f ? 0 : logical < 20.f ? 1 : 2;
+        idx = opt * 2 + (fam == FS ? 1 : 0);
+    }
     int key = (int)lroundf(px * 10);
-    for (auto e : g_fonts) if (e->fam == fam && e->key == key) return e;
-    float sz = key / 10.f; int st = g_famStyle[fam];
-    auto e = new FontE{ fam, key, new G::Font(g_fam[fam], sz, st, G::UnitPixel), 0 };
-    e->ascent = sz * g_fam[fam]->GetCellAscent(st) / (float)g_fam[fam]->GetEmHeight(st);
+    for (auto e : g_fonts) if (e->fam == idx && e->key == key) return e;
+    float sz = key / 10.f; int st = g_famStyle[idx];
+    auto e = new FontE{ idx, key, new G::Font(g_fam[idx], sz, st, G::UnitPixel), 0 };
+    e->ascent = sz * g_fam[idx]->GetCellAscent(st) / (float)g_fam[idx]->GetEmHeight(st);
     g_fonts.push_back(e); return e;
 }
 static float TW(G::Graphics& g, const std::wstring& s, FontE* f) {
@@ -753,16 +781,16 @@ static bool LayoutHasSeconds(int layout) { return S.secs && !g_shift && (layout 
 // chrome geometry in unscaled pixels
 static const float kM = 10, kTitle = 16, kTop = 38, kStatusH = 24, kBot = 12 + 10 + 24 + 10, kSide = 24;
 struct Col { const wchar_t* name; float w; };
-static const Col kCols[] = { { L"ID", 40 }, { L"CITY", 128 }, { L"TIME", 124 }, { L"STATE", 78 }, { L"OFFSET", 86 }, { L"DAY", 86 } };
+static const Col kCols[] = { { L"ID", 42 }, { L"CITY", 140 }, { L"TIME", 138 }, { L"STATE", 86 }, { L"OFFSET", 88 }, { L"DAY", 88 } };
 static const wchar_t* kLayoutTitle[] = { L"world clocks", L"analog", L"timeline", L"world clocks" };
 
 static void ContentSize(int layout, int n, float& cw, float& ch) {
     n = std::max(n, 1);
     switch (layout) {
-    case L_ANALOG: { int cols = std::max(1, std::min(S.cols, n)); int rows = (n + cols - 1) / cols; cw = cols * 144.f; ch = rows * 204.f; break; }
-    case L_TIMELINE: cw = 620; ch = 26 + n * 40.f; break;
-    case L_COMPACT: cw = 300; ch = n * 28.f; break;
-    default: cw = 0; for (auto& c : kCols) cw += c.w; ch = 26 + n * 34.f; break;
+    case L_ANALOG: { int cols = std::max(1, std::min(S.cols, n)); int rows = (n + cols - 1) / cols; cw = cols * 148.f; ch = rows * 212.f; break; }
+    case L_TIMELINE: cw = 640; ch = 28 + n * 42.f; break;
+    case L_COMPACT: cw = 320; ch = n * 31.f; break;
+    default: cw = 0; for (auto& c : kCols) cw += c.w; ch = 28 + n * 38.f; break;
     }
 }
 static void ComputeSize(int layout, int n, float s, float& W, float& H) {
@@ -789,7 +817,7 @@ static std::wstring OffFor(int i, const Frame& fr) {
 }
 
 static void DrawEmpty(Ctx& c, float y) {
-    DT(c.g, L"$ no clocks yet — right-click → add clock", F(FR, 12 * c.s), c.x0, y + 22 * c.s, c.th.dim, AL, c.x1 - c.x0, c.th.shadow);
+    DT(c.g, L"$ no clocks yet — right-click → add clock", F(FR, 13 * c.s), c.x0, y + 22 * c.s, c.th.dim, AL, c.x1 - c.x0, c.th.shadow);
 }
 static void DotFill(Ctx& c, float x, float y, float w, float h, int alpha) {
     G::HatchBrush hb(G::HatchStyle50Percent, G::Color(A(c.th.fg, alpha)), G::Color(0));
@@ -798,34 +826,34 @@ static void DotFill(Ctx& c, float x, float y, float w, float h, int alpha) {
 
 // ---- table (list) layout
 static void DrawList(Ctx& c, float top) {
-    float s = c.s, x0 = c.x0, x1 = c.x1, hh = 26 * s, rh = 34 * s;
+    float s = c.s, x0 = c.x0, x1 = c.x1, hh = 28 * s, rh = 38 * s;
     float base = 0; for (auto& k : kCols) base += k.w * s;
     float extra = std::max(0.f, (x1 - x0) - base);
     float cx[7]; float x = x0;
     for (int k = 0; k < 6; k++) { cx[k] = x; x += kCols[k].w * s + (k == 1 ? extra : 0); }
     cx[6] = x1;
     { G::SolidBrush hb{ G::Color(c.th.blue) }; c.g.FillRectangle(&hb, x0, top, x1 - x0, hh); }
-    FontE* fh = F(FS, 12 * s);
-    for (int k = 0; k < 6; k++) DT(c.g, kCols[k].name, fh, cx[k] + 10 * s, top + 17.5f * s, c.th.headFg);
+    FontE* fh = F(FMS, 11.5f * s);
+    for (int k = 0; k < 6; k++) DT(c.g, kCols[k].name, fh, cx[k] + 10 * s, top + 18.5f * s, c.th.headFg);
     { G::Pen dp{ G::Color(A(c.th.headFg, 0x45)), 1 }; c.g.DrawLine(&dp, cx[3] - 0.5f, top, cx[3] - 0.5f, top + hh); }
     int n = (int)g_clocks.size(); if (!n) { DrawEmpty(c, top + hh); return; }
     for (int i = 0; i < n; i++) {
-        float y = top + hh + i * rh, b = y + 22.5f * s, p = 10 * s; const CTime& t = c.fr.t[i]; int st = ClockStatus(t.st);
+        float y = top + hh + i * rh, b = y + 25 * s, p = 10 * s; const CTime& t = c.fr.t[i]; int st = ClockStatus(t.st);
         c.v.hits.push_back({ { (LONG)x0, (LONG)y, (LONG)x1, (LONG)(y + rh) }, i });
         if (c.v.hover == i) { G::SolidBrush hv{ G::Color(c.th.hover) }; c.g.FillRectangle(&hv, x0, y, x1 - x0, rh); }
-        DT(c.g, Fmt(L"%03d", i + 1), F(FR, 13 * s), cx[0] + p, b, c.th.dim, AL, 0, c.th.shadow);
-        DT(c.g, g_clocks[i].label, F(FR, 13.5f * s), cx[1] + p, b, c.th.fg, AL, cx[2] - cx[1] - p - 4 * s, c.th.shadow);
+        DT(c.g, Fmt(L"%03d", i + 1), F(FM, 12.5f * s), cx[0] + p, b, c.th.dim, AL, 0, c.th.shadow);
+        DT(c.g, g_clocks[i].label, F(FS, 14.5f * s), cx[1] + p, b, c.th.fg, AL, cx[2] - cx[1] - p - 4 * s, c.th.shadow);
         std::wstring ap, hm = FmtHM(t.st, &ap);
-        FontE* ftm = F(FS, 16 * s); FontE* fsm = F(FR, 11 * s); float tx = cx[2] + p;
+        FontE* ftm = F(FMS, 18 * s); FontE* fsm = F(FM, 12 * s); float tx = cx[2] + p;
         DT(c.g, hm, ftm, tx, b + 0.5f * s, c.th.fg, AL, 0, c.th.shadow); tx += TW(c.g, hm, ftm);
         if (S.secs && !g_shift) { std::wstring sc = Fmt(L":%02d", t.st.wSecond); DT(c.g, sc, fsm, tx, b, c.th.dim, AL, 0, c.th.shadow); tx += TW(c.g, sc, fsm); }
         if (!ap.empty()) DT(c.g, Lower(ap), fsm, tx + 4 * s, b, c.th.accent, AL, 0, c.th.shadow);
-        DT(c.g, Lower(kStatus[st]), F(FR, 13 * s), cx[3] + p, b, StatusColor(c.th, st), AL, 0, c.th.shadow);
-        DT(c.g, OffFor(i, c.fr), F(FR, 12.5f * s), cx[4] + p, b, c.th.dim, AL, cx[5] - cx[4] - p, c.th.shadow);
+        DT(c.g, Lower(kStatus[st]), F(FS, 13 * s), cx[3] + p, b, StatusColor(c.th, st), AL, 0, c.th.shadow);
+        DT(c.g, OffFor(i, c.fr), F(FM, 13 * s), cx[4] + p, b, c.th.dim, AL, cx[5] - cx[4] - p, c.th.shadow);
         float bw = cx[6] - cx[5] - p - 2 * s, frac = (t.st.wHour * 60 + t.st.wMinute) / 1440.f;
-        DotFill(c, cx[5] + p, y + 11 * s, bw, 13 * s, 0x40);
+        DotFill(c, cx[5] + p, y + 12.5f * s, bw, 13 * s, 0x40);
         G::SolidBrush fb{ G::Color(st == 0 ? c.th.accent : c.th.blue) };
-        c.g.FillRectangle(&fb, cx[5] + p, y + 11 * s, std::max(1.f, bw * frac), 13 * s);
+        c.g.FillRectangle(&fb, cx[5] + p, y + 12.5f * s, std::max(1.f, bw * frac), 13 * s);
     }
 }
 
@@ -840,7 +868,7 @@ static void DrawFace(Ctx& c, float cx, float cy, float r, const SYSTEMTIME& st) 
         G::Pen p{ G::Color(quarter ? c.th.blue : hourTick ? A(c.th.fg, 0xB0) : A(c.th.dim, 0x70)), quarter ? 2.8f * s : hourTick ? 1.5f * s : 1.0f * s };
         c.g.DrawLine(&p, cx + sinf(a) * r0, cy - cosf(a) * r0, cx + sinf(a) * r1, cy - cosf(a) * r1);
     }
-    DT(c.g, Lower(kDays[st.wDayOfWeek]) + L" " + std::to_wstring(st.wDay), F(FR, 9.5f * s), cx, cy + r * 0.5f, c.th.dim, AC);
+    DT(c.g, Lower(kDays[st.wDayOfWeek]) + L" " + std::to_wstring(st.wDay), F(FM, 10 * s), cx, cy + r * 0.5f, c.th.dim, AC);
     auto handf = [&](float deg, float len, float tail, float w, DWORD col) {
         float a = deg * 3.14159265f / 180; G::Pen p{ G::Color(col), w };
         p.SetStartCap(G::LineCapRound); p.SetEndCap(G::LineCapRound);
@@ -855,7 +883,7 @@ static void DrawFace(Ctx& c, float cx, float cy, float r, const SYSTEMTIME& st) 
     G::SolidBrush cd{ G::Color(c.th.face) }; c.g.FillEllipse(&cd, cx - 1.3f * s, cy - 1.3f * s, 2.6f * s, 2.6f * s);
 }
 static void DrawAnalog(Ctx& c, float top) {
-    float s = c.s, tw = 144 * s, th = 204 * s;
+    float s = c.s, tw = 148 * s, th = 212 * s;
     int n = (int)g_clocks.size(); if (!n) { DrawEmpty(c, top); return; }
     int cols = std::max(1, std::min(S.cols, n));
     float gx = c.x0 + std::max(0.f, ((c.x1 - c.x0) - cols * tw) / 2);
@@ -866,40 +894,40 @@ static void DrawAnalog(Ctx& c, float top) {
         float r = 50 * s, cx = x + tw / 2, cy = y + 8 * s + r;
         DrawFace(c, cx, cy, r, t.st);
         float b = cy + r + 22 * s;
-        DT(c.g, g_clocks[i].label, F(FS, 13.5f * s), cx, b, c.th.fg, AC, tw - 12 * s, c.th.shadow);
-        DT(c.g, TimeLower(t.st), F(FR, 13 * s), cx, b + 19 * s, c.th.fg, AC, 0, c.th.shadow);
+        DT(c.g, g_clocks[i].label, F(FS, 15 * s), cx, b, c.th.fg, AC, tw - 12 * s, c.th.shadow);
+        DT(c.g, TimeLower(t.st), F(FM, 14 * s), cx, b + 21 * s, c.th.fg, AC, 0, c.th.shadow);
         std::wstring sw = Lower(kStatus[st]), ow = L" · " + OffFor(i, c.fr);
-        FontE* f3 = F(FR, 11 * s); float w1 = TW(c.g, sw, f3), w2 = TW(c.g, ow, f3), sx = cx - (w1 + w2) / 2;
-        DT(c.g, sw, f3, sx, b + 36 * s, StatusColor(c.th, st), AL, 0, c.th.shadow);
-        DT(c.g, ow, f3, sx + w1, b + 36 * s, c.th.dim, AL, 0, c.th.shadow);
+        FontE* f3 = F(FR, 12.5f * s); float w1 = TW(c.g, sw, f3), w2 = TW(c.g, ow, f3), sx = cx - (w1 + w2) / 2;
+        DT(c.g, sw, f3, sx, b + 40 * s, StatusColor(c.th, st), AL, 0, c.th.shadow);
+        DT(c.g, ow, f3, sx + w1, b + 40 * s, c.th.dim, AL, 0, c.th.shadow);
     }
 }
 
 // ---- compact layout
 static void DrawCompact(Ctx& c, float top) {
-    float s = c.s, rh = 28 * s, x0 = c.x0, x1 = c.x1;
+    float s = c.s, rh = 31 * s, x0 = c.x0, x1 = c.x1;
     int n = (int)g_clocks.size(); if (!n) { DrawEmpty(c, top - 6 * s); return; }
     for (int i = 0; i < n; i++) {
-        float y = top + i * rh, b = y + 19 * s; const CTime& t = c.fr.t[i]; int st = ClockStatus(t.st);
+        float y = top + i * rh, b = y + 21 * s; const CTime& t = c.fr.t[i]; int st = ClockStatus(t.st);
         c.v.hits.push_back({ { (LONG)x0, (LONG)y, (LONG)x1, (LONG)(y + rh) }, i });
         if (c.v.hover == i) { G::SolidBrush hv{ G::Color(c.th.hover) }; c.g.FillRectangle(&hv, x0 - 6 * s, y, x1 - x0 + 12 * s, rh); }
-        DT(c.g, L"›", F(FS, 15 * s), x0, b + 0.5f * s, StatusColor(c.th, st), AL, 0, c.th.shadow);
-        std::wstring tm = TimeLower(t.st); FontE* ft = F(FS, 14 * s); float tw = TW(c.g, tm, ft);
+        DT(c.g, L"›", F(FMS, 16 * s), x0, b + 0.5f * s, StatusColor(c.th, st), AL, 0, c.th.shadow);
+        std::wstring tm = TimeLower(t.st); FontE* ft = F(FMS, 15.5f * s); float tw = TW(c.g, tm, ft);
         DT(c.g, tm, ft, x1, b, c.th.fg, AR, 0, c.th.shadow);
-        std::wstring off = g_clocks[i].kind == 1 ? L"" : OffFor(i, c.fr); FontE* fo = F(FR, 11.5f * s); float ow = TW(c.g, off, fo);
+        std::wstring off = g_clocks[i].kind == 1 ? L"" : OffFor(i, c.fr); FontE* fo = F(FM, 12 * s); float ow = TW(c.g, off, fo);
         DT(c.g, off, fo, x1 - tw - 12 * s, b, c.th.dim, AR, 0, c.th.shadow);
-        DT(c.g, g_clocks[i].label, F(FR, 13.5f * s), x0 + 16 * s, b, c.th.fg, AL, std::max(10 * s, x1 - tw - ow - 30 * s - x0 - 16 * s), c.th.shadow);
+        DT(c.g, g_clocks[i].label, F(FS, 14.5f * s), x0 + 16 * s, b, c.th.fg, AL, std::max(10 * s, x1 - tw - ow - 30 * s - x0 - 16 * s), c.th.shadow);
     }
 }
 
 // ---- timeline layout
 static void DrawTimeline(Ctx& c, float top) {
-    float s = c.s, x0 = c.x0, x1 = c.x1, labelW = 144 * s, rowH = 40 * s, head = 26 * s;
+    float s = c.s, x0 = c.x0, x1 = c.x1, labelW = 150 * s, rowH = 42 * s, head = 28 * s;
     float barX = x0 + labelW, barW = x1 - barX;
     int n = (int)g_clocks.size();
     c.v.tlBar = { (LONG)barX, (LONG)top, (LONG)(barX + barW), (LONG)(top + head + std::max(n, 1) * rowH) };
     float cxNow = barX + barW / 2;
-    FontE* fh = F(FR, 11 * s);
+    FontE* fh = F(FM, 11.5f * s);
     DT(c.g, L"−12h", fh, barX, top + 15 * s, c.th.dim, AL, 0, c.th.shadow);
     DT(c.g, L"+12h", fh, barX + barW, top + 15 * s, c.th.dim, AR, 0, c.th.shadow);
     if (n >= 2) DT(c.g, L"■ all working", fh, x0, top + 15 * s, c.th.accent, AL, labelW - 8 * s, c.th.shadow);
@@ -907,9 +935,9 @@ static void DrawTimeline(Ctx& c, float top) {
         Frame hf = MakeFrame(c.v.tlMin);
         float hx = cxNow + c.v.tlMin / 1440.f * barW;
         std::wstring lbl = TimeLower(hf.local.st) + L" (" + (c.v.tlMin >= 0 ? L"+" : L"−") + Fmt(L"%dh%02d", std::abs(c.v.tlMin) / 60, std::abs(c.v.tlMin) % 60) + L")";
-        DT(c.g, lbl, F(FS, 11.5f * s), std::clamp(hx, barX + 60 * s, barX + barW - 60 * s), top + 15 * s, c.th.fg, AC, 0, c.th.shadow);
+        DT(c.g, lbl, F(FMS, 12 * s), std::clamp(hx, barX + 60 * s, barX + barW - 60 * s), top + 15 * s, c.th.fg, AC, 0, c.th.shadow);
     } else {
-        DT(c.g, L"now · " + TimeLower(c.fr.local.st), F(FS, 11.5f * s), cxNow, top + 15 * s, c.th.accent, AC, 0, c.th.shadow);
+        DT(c.g, L"now · " + TimeLower(c.fr.local.st), F(FMS, 12 * s), cxNow, top + 15 * s, c.th.accent, AC, 0, c.th.shadow);
     }
     if (!n) { DrawEmpty(c, top + head); return; }
     double utcMin = (double)(c.fr.utc / 10000000ULL) / 60.0;
@@ -918,8 +946,8 @@ static void DrawTimeline(Ctx& c, float top) {
         float y = top + head + i * rowH; const CTime& t = c.fr.t[i];
         c.v.hits.push_back({ { (LONG)x0, (LONG)y, (LONG)barX, (LONG)(y + rowH) }, i });
         if (c.v.hover == i && !c.v.tlHover) { G::SolidBrush hv{ G::Color(c.th.hover) }; c.g.FillRectangle(&hv, x0 - 6 * s, y + 2 * s, labelW, rowH - 4 * s); }
-        DT(c.g, g_clocks[i].label, F(FS, 13 * s), x0, y + 18 * s, c.th.fg, AL, labelW - 12 * s, c.th.shadow);
-        DT(c.g, TimeLower(t.st) + L" " + OffFor(i, c.fr), F(FR, 10.5f * s), x0, y + 33 * s, c.th.dim, AL, labelW - 12 * s, c.th.shadow);
+        DT(c.g, g_clocks[i].label, F(FS, 14.5f * s), x0, y + 19 * s, c.th.fg, AL, labelW - 12 * s, c.th.shadow);
+        DT(c.g, TimeLower(t.st) + L" " + OffFor(i, c.fr), F(FM, 11.5f * s), x0, y + 35 * s, c.th.dim, AL, labelW - 12 * s, c.th.shadow);
         float by = y + 7 * s, bh = rowH - 14 * s;
         c.g.SetClip(G::RectF(barX, by, barW, bh));
         double localStart = utcMin - 720 + t.offset;
@@ -933,10 +961,10 @@ static void DrawTimeline(Ctx& c, float top) {
             if (work) { G::SolidBrush b{ G::Color(c.th.blue) }; c.g.FillRectangle(&b, x + 0.6f * s, by, cw - 1.2f * s, bh); }
             else if (day) { G::SolidBrush b{ G::Color(A(c.th.fg, 0x1C)) }; c.g.FillRectangle(&b, x + 0.6f * s, by, cw - 1.2f * s, bh); }
             else DotFill(c, x + 0.6f * s, by, cw - 1.2f * s, bh, 0x30);
-            if (hour == 0) DT(c.g, Lower(kDays[dow]), F(FS, 9 * s), x + cw / 2, by + bh / 2 + 3.2f * s, work ? c.th.headFg : c.th.accent, AC);
+            if (hour == 0) DT(c.g, Lower(kDays[dow]), F(FMS, 9.5f * s), x + cw / 2, by + bh / 2 + 3.2f * s, work ? c.th.headFg : c.th.accent, AC);
             else if (cw >= 13 * s) {
                 int hh = S.h24 ? hour : (hour % 12 == 0 ? 12 : hour % 12);
-                DT(c.g, std::to_wstring(hh), F(FR, 9.5f * s), x + cw / 2, by + bh / 2 + 3.4f * s, work ? c.th.headFg : c.th.dim, AC);
+                DT(c.g, std::to_wstring(hh), F(FM, 10.5f * s), x + cw / 2, by + bh / 2 + 3.4f * s, work ? c.th.headFg : c.th.dim, AC);
             }
         }
         c.g.ResetClip();
@@ -981,6 +1009,7 @@ static void PaintView(View& v) {
     int layout = v.fly ? S.flyLayout : S.layout;
     int theme = ResolveTheme(S.theme); if (v.fly && (theme == T_GLASS || theme == T_TRANSPARENT)) theme = T_ELECTRIC;
     float s = (v.fly ? 1.0f : S.scale / 100.f) * DpiOf(v.hwnd) / 96.f;
+    g_optScale = s;
     FontsGC();
     Frame fr = MakeFrame();
     float W, H; ComputeSize(layout, (int)g_clocks.size(), s, W, H);
@@ -991,6 +1020,8 @@ static void PaintView(View& v) {
         G::Bitmap bmp(w, h, w * 4, PixelFormat32bppPARGB, (BYTE*)v.surf.bits);
         G::Graphics g(&bmp); SetupGraphics(g); g.Clear(G::Color(0, 0, 0, 0));
         ThemeC th = GetTheme(theme);
+        // crisp ClearType where the panel is opaque; grayscale AA where the desktop shows through
+        if ((th.bg >> 24) >= 0xF0 && (v.fly || S.opacity >= 95)) g.SetTextRenderingHint(G::TextRenderingHintClearTypeGridFit);
         { G::GraphicsPath p; RoundRect(p, 0.5f, 0.5f, w - 1.f, h - 1.f, 6 * s); G::SolidBrush b{ G::Color(th.bg) }; g.FillPath(&b, &p);
           if (th.outline) { G::Pen pen{ G::Color(th.outline), 1 }; g.DrawPath(&pen, &p); } }
         float bx0 = kM * s, by0 = kTitle * s, bx1 = w - kM * s, sy = h - (kM + kStatusH) * s, by1 = sy - 10 * s;
@@ -1001,7 +1032,7 @@ static void PaintView(View& v) {
             g.FillRectangle(&eb, (INT)floorf(x), (INT)floorf(y), (INT)ceilf(ww), (INT)ceilf(hh) + 1);
             g.SetCompositingMode(G::CompositingModeSourceOver); g.SetSmoothingMode(G::SmoothingModeAntiAlias); g.SetPixelOffsetMode(G::PixelOffsetModeHalf);
         };
-        FontE* ft = F(FS, 13.5f * s);
+        FontE* ft = F(FMS, 13.5f * s);
         std::wstring title = std::wstring(L"[ ") + kLayoutTitle[layout] + L" ]";
         float tx = bx0 + 16 * s, tw = TW(g, title, ft);
         erase(tx - 6 * s, by0 - 4 * s, tw + 12 * s, 8 * s);
@@ -1022,7 +1053,7 @@ static void PaintView(View& v) {
         // vim-style status bar
         { G::SolidBrush sb{ G::Color(th.statusBg) }; g.FillRectangle(&sb, bx0, sy, bx1 - bx0, kStatusH * s); }
         const wchar_t* mode = !g_flash.empty() ? L"ALARM" : g_shift ? L"SHIFT" : L"NORMAL";
-        FontE* fsb = F(FS, 12 * s); float base = sy + 16.5f * s;
+        FontE* fsb = F(FMS, 12 * s); float base = sy + 16.5f * s;
         DT(g, mode, fsb, bx0 + 12 * s, base, th.mode);
         float mw = TW(g, mode, fsb);
         SYSTEMTIME ut; FILETIME uf = UFt(fr.utc); FileTimeToSystemTime(&uf, &ut);
@@ -1035,10 +1066,10 @@ static void PaintView(View& v) {
         else if (ai >= 0) mid = AlarmFooterText(ai);
         else mid = Fmt(L"~/winclock · %d clock%ls", (int)g_clocks.size(), g_clocks.size() == 1 ? L"" : L"s");
         float mx0 = bx0 + 12 * s + mw + 14 * s, mx1 = bx1 - 12 * s - rw2 - 14 * s;
-        if (mx1 > mx0 + 20 * s) DT(g, mid, F(FS, 11.5f * s), (mx0 + mx1) / 2, base, th.statusFg, AC, mx1 - mx0);
+        if (mx1 > mx0 + 20 * s) DT(g, mid, F(FS, 12.5f * s), (mx0 + mx1) / 2, base, th.statusFg, AC, mx1 - mx0);
     }
     v.W = w; v.H = h;
-    Present(v.hwnd, v.surf, v.fly ? 255 : (BYTE)(S.opacity * 255 / 100), nullptr);
+    Present(v.hwnd, v.surf, v.fly ? v.animAlpha : (BYTE)(S.opacity * 255 / 100), nullptr);
     long long secs = (long long)(fr.utc / 10000000ULL);
     v.key = LayoutHasSeconds(layout) ? secs : secs / 60;
 }
@@ -1100,8 +1131,9 @@ static void UpdateBar(bool force) {
     Frame fr = MakeFrame();
     FontsGC();
     int thick = b.horiz ? twr.bottom - twr.top : twr.right - twr.left;
+    g_optScale = d;
     bool twoLine = S.tbLabels && (b.horiz ? thick >= 34 * d : true);
-    FontE* fT = F(FS, (twoLine ? 12.5f : 12.5f) * d); FontE* fL = F(FR, 11 * d);
+    FontE* fT = F(FS, 12.5f * d); FontE* fL = F(FR, 11.5f * d);
     std::vector<int> shown = b.items;
     if (S.tbRotate && shown.size() > 1) shown = { b.items[b.rot % b.items.size()] };
 
@@ -1137,14 +1169,16 @@ static void UpdateBar(bool force) {
     W = std::max(W, 1); H = std::max(H, 1);
     int x, y;
     if (b.horiz) {
-        int right = S.tbOffset >= 0 ? twr.right - (int)(S.tbOffset * d)
+        int right = (S.tbAnchor == 2 && S.tbOffset >= 0) ? twr.right - (int)(S.tbOffset * d)
                   : (nrOk && nr.left > twr.left + 200 * d ? nr.left - (int)(6 * d) : twr.right - (int)(300 * d));
-        x = std::clamp(right - W, (int)twr.left, (int)twr.right - W); y = twr.top;
+        x = S.tbAnchor == 1 ? (int)twr.left + (int)(6 * d) : right - W;
+        x = std::clamp(x, (int)twr.left, (int)twr.right - W); y = twr.top;
         if (b.dragging) x = b.lastX;
     } else {
-        int bottom = S.tbOffset >= 0 ? twr.bottom - (int)(S.tbOffset * d)
+        int bottom = (S.tbAnchor == 2 && S.tbOffset >= 0) ? twr.bottom - (int)(S.tbOffset * d)
                    : (nrOk && nr.top > twr.top + 200 * d ? nr.top - (int)(6 * d) : twr.bottom - (int)(300 * d));
-        y = std::clamp(bottom - H, (int)twr.top, (int)twr.bottom - H); x = twr.left;
+        y = S.tbAnchor == 1 ? (int)twr.top + (int)(6 * d) : bottom - H;
+        y = std::clamp(y, (int)twr.top, (int)twr.bottom - H); x = twr.left;
         if (b.dragging) y = b.lastY;
     }
     b.lastX = x; b.lastY = y;
@@ -1153,7 +1187,7 @@ static void UpdateBar(bool force) {
     {
         G::Bitmap bmp(W, H, W * 4, PixelFormat32bppPARGB, (BYTE*)b.surf.bits);
         G::Graphics g(&bmp); SetupGraphics(g); g.Clear(G::Color(0x01000000));   // alpha 1: invisible but clickable
-        DWORD fg = light ? NAVY : SNOW, dim = light ? 0xFF5C6594 : ICE;
+        DWORD fg = light ? NAVY : SNOW, dim = light ? 0xFF4A537F : ICE;
         for (size_t k = 0; k < shown.size(); k++) {
             int ci = shown[k]; RECT rc = b.cells[k]; const CTime& t = fr.t[ci];
             float cx = (rc.left + rc.right) / 2.f, cy = (rc.top + rc.bottom) / 2.f;
@@ -1183,7 +1217,7 @@ static void UpdateBar(bool force) {
 
 // ---------------------------------------------------------------- tray icon
 static void UpdateTrayTip() {
-    if (!g_nid.hWnd) return;
+    if (!g_nid.hWnd || !g_trayAdded) return;
     Frame fr = MakeFrame(); std::wstring s;
     for (size_t i = 0; i < g_clocks.size(); i++) {
         std::wstring line = g_clocks[i].label + L"  " + FmtHMFull(fr.t[i].st) + L"\n";
@@ -1194,12 +1228,14 @@ static void UpdateTrayTip() {
     wcsncpy(g_nid.szTip, s.c_str(), 127); g_nid.szTip[127] = 0;
     g_nid.uFlags = NIF_TIP | NIF_SHOWTIP; Shell_NotifyIconW(NIM_MODIFY, &g_nid);
 }
+static void RemoveTrayIcon() { if (g_trayAdded) { Shell_NotifyIconW(NIM_DELETE, &g_nid); g_trayAdded = false; } }
 static void AddTrayIcon() {
+    RemoveTrayIcon();
     g_nid = NOTIFYICONDATAW{}; g_nid.cbSize = sizeof(g_nid); g_nid.hWnd = g_main; g_nid.uID = 1;
     g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP; g_nid.uCallbackMessage = WM_APP_TRAY;
     LoadIconMetric(g_inst, MAKEINTRESOURCEW(IDI_APP), LIM_SMALL, &g_nid.hIcon);
     wcscpy(g_nid.szTip, L"WinClock");
-    Shell_NotifyIconW(NIM_ADD, &g_nid);
+    g_trayAdded = Shell_NotifyIconW(NIM_ADD, &g_nid) != FALSE;
     g_nid.uVersion = NOTIFYICON_VERSION_4; Shell_NotifyIconW(NIM_SETVERSION, &g_nid);
     UpdateTrayTip();
 }
@@ -1313,9 +1349,10 @@ static void SetStartup(bool on) {
 }
 
 // ---------------------------------------------------------------- add / edit clock dialog
-struct ZoneEntry { std::wstring text, tzid, city; long bias; };
+struct ZoneEntry { std::wstring text, tzid, city; long bias; std::vector<std::pair<std::wstring, std::wstring>> group; };
 struct DlgState {
     bool edit = false; std::wstring label, tzid; bool taskbar = false;
+    std::vector<std::pair<std::wstring, std::wstring>> picks;   // (label, tzid) to add
     std::vector<ZoneEntry> zones; bool labelEdited = false, settingLabel = false;
 };
 
@@ -1350,6 +1387,43 @@ static std::vector<ZoneEntry> BuildZoneEntries() {
             out.push_back({ city + L"   —   " + z.text, z.tzid, shortCity, z.bias }); break;
         }
     }
+    // whole countries: one entry adds every zone in the country
+    struct Country { const wchar_t* name; const wchar_t* members; };
+    static const Country kCountries[] = {
+        { L"United States", L"New York=Eastern Standard Time;Chicago=Central Standard Time;Denver=Mountain Standard Time;Phoenix=US Mountain Standard Time;Los Angeles=Pacific Standard Time;Anchorage=Alaskan Standard Time;Honolulu=Hawaiian Standard Time" },
+        { L"Canada", L"St. John's=Newfoundland Standard Time;Halifax=Atlantic Standard Time;Toronto=Eastern Standard Time;Winnipeg=Central Standard Time;Regina=Canada Central Standard Time;Edmonton=Mountain Standard Time;Vancouver=Pacific Standard Time" },
+        { L"Australia", L"Perth=W. Australia Standard Time;Darwin=AUS Central Standard Time;Adelaide=Cen. Australia Standard Time;Brisbane=E. Australia Standard Time;Sydney=AUS Eastern Standard Time;Hobart=Tasmania Standard Time" },
+        { L"Russia", L"Kaliningrad=Kaliningrad Standard Time;Moscow=Russian Standard Time;Samara=Russia Time Zone 3;Yekaterinburg=Ekaterinburg Standard Time;Omsk=Omsk Standard Time;Novosibirsk=N. Central Asia Standard Time;Krasnoyarsk=North Asia Standard Time;Irkutsk=North Asia East Standard Time;Yakutsk=Yakutsk Standard Time;Vladivostok=Vladivostok Standard Time;Magadan=Magadan Standard Time;Kamchatka=Russia Time Zone 11" },
+        { L"Brazil", L"S\u00e3o Paulo=E. South America Standard Time;Fortaleza=SA Eastern Standard Time;Cuiab\u00e1=Central Brazilian Standard Time;Manaus=SA Western Standard Time;Rio Branco=SA Pacific Standard Time" },
+        { L"Mexico", L"Mexico City=Central Standard Time (Mexico);Canc\u00fan=Eastern Standard Time (Mexico);Chihuahua=Mountain Standard Time (Mexico);Tijuana=Pacific Standard Time (Mexico)" },
+        { L"Indonesia", L"Jakarta=SE Asia Standard Time;Makassar=Singapore Standard Time;Jayapura=Tokyo Standard Time" },
+        { L"New Zealand", L"Auckland=New Zealand Standard Time;Chatham Islands=Chatham Islands Standard Time" },
+        { L"Chile", L"Santiago=Pacific SA Standard Time;Easter Island=Easter Island Standard Time" },
+        { L"Portugal", L"Lisbon=GMT Standard Time;Azores=Azores Standard Time" },
+        { L"Spain", L"Madrid=Romance Standard Time;Canary Islands=GMT Standard Time" },
+        { L"Europe (west / central / east)", L"London=GMT Standard Time;Berlin=W. Europe Standard Time;Athens=GTB Standard Time" },
+        { L"Asia business hubs", L"Dubai=Arabian Standard Time;Mumbai=India Standard Time;Singapore=Singapore Standard Time;Hong Kong=China Standard Time;Tokyo=Tokyo Standard Time" },
+    };
+    std::vector<ZoneEntry> groups;
+    for (auto& c : kCountries) {
+        ZoneEntry e; e.city = c.name; e.tzid = L"group"; e.bias = 0;
+        std::wstring m = c.members;
+        for (size_t p = 0; p < m.size();) {
+            size_t q = m.find(L';', p); if (q == std::wstring::npos) q = m.size();
+            std::wstring it = m.substr(p, q - p); size_t eq = it.find(L'=');
+            if (eq != std::wstring::npos) {
+                std::wstring tz = it.substr(eq + 1);
+                for (auto& z : zones) if (_wcsicmp(z.tzid.c_str(), tz.c_str()) == 0) { e.group.push_back({ it.substr(0, eq), tz }); break; }
+            }
+            p = q + 1;
+        }
+        if (e.group.size() < 2) continue;
+        e.text = Fmt(L">  %ls \u2014 all %d time zones  (", c.name, (int)e.group.size());
+        for (size_t k = 0; k < e.group.size(); k++) e.text += (k ? L", " : L"") + e.group[k].first;
+        e.text += L")";
+        groups.push_back(e);
+    }
+    out.insert(out.begin() + 2, groups.begin(), groups.end());
     for (auto& z : zones) out.push_back(z);
     return out;
 }
@@ -1369,10 +1443,23 @@ static void DlgFilter(HWND d, DlgState* st) {
     }
     SendMessageW(lb, WM_SETREDRAW, TRUE, 0); InvalidateRect(lb, nullptr, TRUE);
 }
+static std::vector<int> DlgSelected(HWND d) {
+    HWND lb = GetDlgItem(d, IDC_LIST); int n = (int)SendMessageW(lb, LB_GETSELCOUNT, 0, 0);
+    std::vector<int> items(std::max(n, 0));
+    if (n > 0) SendMessageW(lb, LB_GETSELITEMS, n, (LPARAM)items.data());
+    return items;
+}
 static void DlgOnSel(HWND d, DlgState* st) {
-    HWND lb = GetDlgItem(d, IDC_LIST); int sel = (int)SendMessageW(lb, LB_GETCURSEL, 0, 0);
-    if (sel < 0) { SetDlgItemTextW(d, IDC_PREVIEW, L""); return; }
+    HWND lb = GetDlgItem(d, IDC_LIST);
+    std::vector<int> selItems = DlgSelected(d);
+    if (selItems.empty()) { SetDlgItemTextW(d, IDC_PREVIEW, L""); EnableWindow(GetDlgItem(d, IDC_LABEL), TRUE); return; }
+    size_t total = 0; for (int it : selItems) { const ZoneEntry& z = st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, it, 0)]; total += z.group.empty() ? 1 : z.group.size(); }
+    bool multi = total > 1 && !st->edit;
+    EnableWindow(GetDlgItem(d, IDC_LABEL), !multi);
+    if (multi) { SetDlgItemTextW(d, IDC_PREVIEW, Fmt(L"%d clocks will be added, each labelled with its city.  (Ctrl/Shift-click to pick more)", (int)total).c_str()); return; }
+    int sel = selItems[0];
     const ZoneEntry& e = st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, sel, 0)];
+    if (!e.group.empty()) { SetDlgItemTextW(d, IDC_PREVIEW, L"Pick one zone from this country to edit a clock."); return; }
     if (!st->labelEdited) { st->settingLabel = true; SetDlgItemTextW(d, IDC_LABEL, e.city.c_str()); st->settingLabel = false; }
     Clock c; c.tzid = e.tzid; ResolveClock(c);
     FILETIME ft; GetSystemTimeAsFileTime(&ft); CTime t = ClockAt(c, FtU(ft));
@@ -1392,7 +1479,7 @@ static INT_PTR CALLBACK ClockDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         st = (DlgState*)lp; SetWindowLongPtrW(d, DWLP_USER, lp);
         HICON ic = nullptr; LoadIconMetric(g_inst, MAKEINTRESOURCEW(IDI_APP), LIM_SMALL, &ic); SendMessageW(d, WM_SETICON, ICON_SMALL, (LPARAM)ic);
         st->zones = BuildZoneEntries();
-        if (st->edit) SetWindowTextW(d, L"Edit clock");
+        SetWindowTextW(d, st->edit ? L"Edit clock" : L"Add clocks");
         st->settingLabel = true; SetDlgItemTextW(d, IDC_LABEL, st->label.c_str()); st->settingLabel = false;
         st->labelEdited = st->edit;
         CheckDlgButton(d, IDC_TASKBAR, st->taskbar ? BST_CHECKED : BST_UNCHECKED);
@@ -1404,7 +1491,7 @@ static INT_PTR CALLBACK ClockDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
                 const ZoneEntry& e = st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, i, 0)];
                 if (_wcsicmp(e.tzid.c_str(), st->tzid.c_str()) == 0) { if (pick < 0) pick = i; if (e.city == st->label) { pick = i; break; } }
             }
-            if (pick >= 0) { SendMessageW(lb, LB_SETCURSEL, pick, 0); DlgOnSel(d, st); }
+            if (pick >= 0) { SendMessageW(lb, LB_SETSEL, TRUE, pick); SendMessageW(lb, LB_SETCARETINDEX, pick, 0); DlgOnSel(d, st); }
         }
         SetWindowSubclass(GetDlgItem(d, IDC_SEARCH), SearchSubclass, 1, (DWORD_PTR)lb);
         SetForegroundWindow(d);
@@ -1414,7 +1501,7 @@ static INT_PTR CALLBACK ClockDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_SEARCH:
-            if (HIWORD(wp) == EN_CHANGE) { DlgFilter(d, st); SendDlgItemMessageW(d, IDC_LIST, LB_SETCURSEL, 0, 0); DlgOnSel(d, st); }
+            if (HIWORD(wp) == EN_CHANGE) { DlgFilter(d, st); SendDlgItemMessageW(d, IDC_LIST, LB_SETSEL, TRUE, 0); SendDlgItemMessageW(d, IDC_LIST, LB_SETCARETINDEX, 0, 0); DlgOnSel(d, st); }
             break;
         case IDC_LIST:
             if (HIWORD(wp) == LBN_SELCHANGE) DlgOnSel(d, st);
@@ -1424,11 +1511,18 @@ static INT_PTR CALLBACK ClockDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
             if (HIWORD(wp) == EN_CHANGE && !st->settingLabel) st->labelEdited = true;
             break;
         case IDOK: {
-            HWND lb = GetDlgItem(d, IDC_LIST); int sel = (int)SendMessageW(lb, LB_GETCURSEL, 0, 0);
-            if (sel >= 0) st->tzid = st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, sel, 0)].tzid;
-            else if (!st->edit) { MessageBeep(MB_ICONWARNING); return TRUE; }
-            wchar_t lab[128]; GetDlgItemTextW(d, IDC_LABEL, lab, 128); st->label = lab;
-            if (st->label.empty()) st->label = sel >= 0 ? st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, sel, 0)].city : st->tzid;
+            HWND lb = GetDlgItem(d, IDC_LIST);
+            std::vector<int> selItems = DlgSelected(d);
+            st->picks.clear();
+            for (int it : selItems) {
+                const ZoneEntry& z = st->zones[(size_t)SendMessageW(lb, LB_GETITEMDATA, it, 0)];
+                if (z.group.empty()) st->picks.push_back({ z.city, z.tzid });
+                else for (auto& gm : z.group) st->picks.push_back(gm);
+            }
+            if (st->picks.empty()) { if (!st->edit) { MessageBeep(MB_ICONWARNING); return TRUE; } st->picks.push_back({ st->label, st->tzid }); }
+            wchar_t lab[128]; GetDlgItemTextW(d, IDC_LABEL, lab, 128);
+            if (st->picks.size() == 1 && lab[0]) st->picks[0].first = lab;
+            st->label = st->picks[0].first; st->tzid = st->picks[0].second;
             st->taskbar = IsDlgButtonChecked(d, IDC_TASKBAR) == BST_CHECKED;
             EndDialog(d, IDOK); return TRUE;
         }
@@ -1445,8 +1539,17 @@ static void ClockDialog(int idx) {   // idx < 0 = add
     if (st.edit) { st.label = g_clocks[idx].label; st.tzid = g_clocks[idx].tzid; st.taskbar = g_clocks[idx].taskbar; }
     else st.taskbar = std::count_if(g_clocks.begin(), g_clocks.end(), [](const Clock& c) { return c.taskbar; }) < 2;
     if (DialogBoxParamW(g_inst, MAKEINTRESOURCEW(IDD_CLOCK), g_main, ClockDlgProc, (LPARAM)&st) == IDOK && g_clocks.size() < 50) {
-        Clock c; c.label = st.label; c.tzid = st.tzid; c.taskbar = st.taskbar; ResolveClock(c);
-        if (st.edit && idx < (int)g_clocks.size()) g_clocks[idx] = c; else g_clocks.push_back(c);
+        if (st.edit && idx < (int)g_clocks.size()) {
+            Clock c; c.label = st.label; c.tzid = st.tzid; c.taskbar = st.taskbar; ResolveClock(c); g_clocks[idx] = c;
+        } else {
+            for (auto& pk : st.picks) {
+                bool dup = false;
+                for (auto& e : g_clocks) if (e.label == pk.first && _wcsicmp(e.tzid.c_str(), pk.second.c_str()) == 0) dup = true;
+                if (dup || g_clocks.size() >= 50) continue;
+                Clock c; c.label = pk.first; c.tzid = pk.second; c.taskbar = st.taskbar && st.picks.size() == 1 ? true : (st.taskbar && st.picks.size() <= 3); ResolveClock(c);
+                g_clocks.push_back(c);
+            }
+        }
         SaveClocks(); RefreshAll();
     }
     open = false;
@@ -1668,7 +1771,7 @@ static void FindMeetingSlot() {
 enum {
     ID_ADD = 100, ID_LAYOUT = 110, ID_THEME = 120, ID_OPA = 130, ID_SCALE = 140,
     ID_24H = 150, ID_SECS, ID_DATE, ID_ZDESK = 160, ID_ZTOP, ID_LOCK = 165, ID_CLICK,
-    ID_TB_SHOW = 170, ID_TB_ALL, ID_TB_ROT, ID_TB_LABELS, ID_TB_RESET,
+    ID_TB_SHOW = 170, ID_TB_ALL, ID_TB_ROT, ID_TB_LABELS, ID_TB_RESET, ID_TB_LEFT, ID_TB_RIGHT, ID_TB_CUSTOM, ID_TRAY,
     ID_RESETSHIFT = 180, ID_COPY, ID_TOGGLEVIS, ID_STARTUP, ID_OPENINI, ID_RELOAD, ID_ABOUT, ID_EXIT,
     ID_COLS = 190, ID_FLY = 200, ID_WORK = 210, ID_ALARM_ADD = 230, ID_JUMP, ID_MEET, ID_CHIME, ID_CLOCK = 1000, ID_ALARMS = 2000
 };
@@ -1683,7 +1786,7 @@ static HMENU BuildMenu() {
         mi.fType = radio ? MFT_RADIOCHECK : MFT_STRING; mi.fState = on ? MFS_CHECKED : 0; mi.wID = id; mi.dwTypeData = (LPWSTR)t.c_str();
         InsertMenuItemW(h, GetMenuItemCount(h), TRUE, &mi);
     };
-    AppendMenuW(m, MF_STRING, ID_ADD, L"➕  Add clock…");
+    AppendMenuW(m, MF_STRING, ID_ADD, L"➕  Add clocks / countries…");
     HMENU clocks = CreatePopupMenu();
     for (int i = 0; i < (int)g_clocks.size(); i++) {
         HMENU c = CreatePopupMenu();
@@ -1760,7 +1863,11 @@ static HMENU BuildMenu() {
     chk(tb, ID_TB_ROT, L"Rotate one at a time", S.tbRotate, true);
     chk(tb, ID_TB_LABELS, L"Show city labels", S.tbLabels);
     AppendMenuW(tb, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(tb, MF_STRING, ID_TB_RESET, L"Reset position (next to tray)");
+    chk(tb, ID_TB_LEFT, L"Position: left edge", S.tbAnchor == 1, true);
+    chk(tb, ID_TB_RIGHT, L"Position: right, next to tray", S.tbAnchor == 0, true);
+    chk(tb, ID_TB_CUSTOM, L"Position: custom (drag the clocks)", S.tbAnchor == 2, true);
+    AppendMenuW(tb, MF_SEPARATOR, 0, nullptr);
+    chk(tb, ID_TRAY, L"Show tray icon", S.trayIcon);
     AppendMenuW(m, MF_POPUP, (UINT_PTR)tb, L"Taskbar");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
 
@@ -1834,7 +1941,14 @@ static void HandleCommand(int id) {
         case ID_TB_ALL: S.tbRotate = false; break;
         case ID_TB_ROT: S.tbRotate = true; break;
         case ID_TB_LABELS: S.tbLabels = !S.tbLabels; break;
-        case ID_TB_RESET: S.tbOffset = -1; break;
+        case ID_TB_RESET: case ID_TB_RIGHT: S.tbAnchor = 0; break;
+        case ID_TB_LEFT: S.tbAnchor = 1; break;
+        case ID_TB_CUSTOM: S.tbAnchor = 2; if (S.tbOffset < 0) S.tbOffset = 320; break;
+        case ID_TRAY:
+            S.trayIcon = !S.trayIcon;
+            if (S.trayIcon) AddTrayIcon(); else RemoveTrayIcon();
+            if (!S.trayIcon && !S.tbShow && !S.visible) ShowWidget(true);   // never leave WinClock with no way back in
+            break;
         case ID_RESETSHIFT: g_shift = 0; save = false; break;
         case ID_COPY: CopyTimes(); return;
         case ID_TOGGLEVIS: ShowWidget(!S.visible); return;
@@ -1900,7 +2014,21 @@ static void ShowFlyout() {
     }
     x = std::clamp(x, (int)wa.left + gap, (int)wa.right - v.W - gap);
     y = std::clamp(y, (int)wa.top + gap, std::max((int)wa.top + gap, (int)wa.bottom - v.H - gap));
-    SetWindowPos(v.hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    // Appear from where it came from: rise out of the taskbar, critically damped (no overshoot).
+    BOOL anim = TRUE; SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &anim, 0);
+    int off = (int)(14 * DpiOf(g_bar.hwnd) / 96);
+    v.animDX = abd.uEdge == ABE_LEFT ? -off : abd.uEdge == ABE_RIGHT ? off : 0;
+    v.animDY = abd.uEdge == ABE_TOP ? -off : (abd.uEdge == ABE_LEFT || abd.uEdge == ABE_RIGHT) ? 0 : off;
+    v.animX = x; v.animY = y;
+    if (anim) {
+        v.animAlpha = 0; v.animStart = GetTickCount();
+        Present(v.hwnd, v.surf, 0, nullptr);
+        SetWindowPos(v.hwnd, HWND_TOPMOST, x + v.animDX, y + v.animDY, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetTimer(v.hwnd, 7, 10, nullptr);
+    } else {
+        v.animAlpha = 255; Present(v.hwnd, v.surf, 255, nullptr);
+        SetWindowPos(v.hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
     SetForegroundWindow(v.hwnd);
     ScheduleTick();
 }
@@ -1942,6 +2070,14 @@ static LRESULT CALLBACK ViewProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         if (v.hover != -1 || v.tlHover) { v.hover = -1; v.tlHover = false; PaintView(v); }
         return 0;
     case WM_TIMER:
+        if (wp == 7) {   // flyout entrance: ease-out (critically damped feel), ~180 ms
+            float t = std::min(1.f, (GetTickCount() - v.animStart) / 180.f), e = 1 - (1 - t) * (1 - t) * (1 - t);
+            v.animAlpha = (BYTE)(255 * e);
+            SetWindowPos(h, nullptr, v.animX + (int)lroundf(v.animDX * (1 - e)), v.animY + (int)lroundf(v.animDY * (1 - e)), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            Present(h, v.surf, v.animAlpha, nullptr);
+            if (t >= 1) KillTimer(h, 7);
+            return 0;
+        }
         if (wp == TM_TIP) {
             KillTimer(h, TM_TIP);
             if (v.hover >= 0 && v.hover < (int)g_clocks.size()) { Frame f = MakeFrame(); TipShow(v.tip, ClockTooltip(v.hover, f)); }
@@ -2059,6 +2195,7 @@ static LRESULT CALLBACK BarProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
                 float d = (pGetDpiForWindow && tray ? (float)pGetDpiForWindow(tray) : DpiOf(nullptr)) / 96.f;
                 RECT tw = b.lastTb;
+                S.tbAnchor = 2;
                 S.tbOffset = b.horiz ? (int)((tw.right - (b.lastX + b.W)) / d) : (int)((tw.bottom - (b.lastY + b.H)) / d);
                 SaveSettings(); UpdateBar(true);
             } else ShowFlyout();
@@ -2101,11 +2238,12 @@ static void SetPaused(bool p) {
 }
 
 static LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
-    if (m == WM_TASKBARCREATED && WM_TASKBARCREATED) { AddTrayIcon(); g_bar.key = -1; RefreshAll(); return 0; }
+    if (m == WM_TASKBARCREATED && WM_TASKBARCREATED) { g_trayAdded = false; if (S.trayIcon) AddTrayIcon(); g_bar.key = -1; RefreshAll(); return 0; }
     switch (m) {
     case WM_TIMER:
         if (wp == TM_TICK) { Tick(false); ScheduleTick(); }
         else if (wp == TM_ALARM) AlarmTick();
+        else if (wp == 5) { KillTimer(h, 5); if (!S.trayIcon) RemoveTrayIcon(); }
         else if (wp == TM_BAR) {
             if (S.tbRotate && g_bar.items.size() > 1) {
                 APPBARDATA abd{}; abd.cbSize = sizeof(abd);
@@ -2142,7 +2280,7 @@ static LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_SETTINGCHANGE: case WM_DISPLAYCHANGE: case WM_DWMCOLORIZATIONCOLORCHANGED:
         RefreshLocalZone(); g_appsLight = -1; g_bar.key = -1; RefreshAll(); return 0;
     case WM_DESTROY:
-        Shell_NotifyIconW(NIM_DELETE, &g_nid);
+        RemoveTrayIcon();
         if (g_hook) UnhookWinEvent(g_hook);
         WTSUnRegisterSessionNotification(h);
         if (g_powerNotify) UnregisterPowerSettingNotification(g_powerNotify);
@@ -2190,6 +2328,7 @@ static void RunPreviews() {
     for (auto& c : g_clocks) diag += c.valid ? L"1" : L"0";
     diag += L" zones_total=" + std::to_wstring(BuildZoneEntries().size());
     diag += L" ini=" + g_ini;
+    for (int k = 0; k < 8; k++) diag += L"\nfont" + std::to_wstring(k) + L"=" + g_famName[k];
     HANDLE f = CreateFileW((dir + L"diag.txt").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     if (f != INVALID_HANDLE_VALUE) { std::string u; int n = WideCharToMultiByte(CP_UTF8, 0, diag.c_str(), -1, nullptr, 0, nullptr, nullptr); u.resize(n); WideCharToMultiByte(CP_UTF8, 0, diag.c_str(), -1, &u[0], n, nullptr, nullptr); DWORD w; WriteFile(f, u.data(), n - 1, &w, nullptr); CloseHandle(f); }
     MessageBoxW(nullptr, (L"Preview images written to\n" + dir).c_str(), L"WinClock preview", MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
@@ -2238,7 +2377,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     if (S.visible) ShowWindow(g_widget.hwnd, SW_SHOWNOACTIVATE);
     ApplyWidgetStyle();
 
-    AddTrayIcon();
+    if (S.trayIcon) AddTrayIcon();
     g_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     WTSRegisterSessionNotification(g_main, NOTIFY_FOR_THIS_SESSION);
     g_powerNotify = RegisterPowerSettingNotification(g_main, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);

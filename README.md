@@ -7,10 +7,13 @@ It has a terminal / TUI look: deep navy, periwinkle and hot pink, with a monospa
 
 It's one native `.exe` of about 390 KB with no installer and no runtime. Settings are stored in `WinClock.ini` next to it.
 
+## Adding clocks
+Right-click → **Add clocks / countries…**, then search a city, country or zone. **Ctrl/Shift-click** to add several at once. Entries starting with `>` add a whole country in one go: United States (7 zones), Canada, Australia, Russia (12), Brazil, Mexico, Indonesia, New Zealand, Chile, Portugal, Spain, plus Europe and Asia business-hub presets.
+
 ## Where clocks appear
 * **Desktop widget:** pinned to the desktop (it stays visible with Win+D) or set to always on top. Always-on-top mode hides itself while a full-screen app is running.
-* **Taskbar:** clocks sit next to the tray. Click them for a pop-up with every clock; drag them sideways to move them.
-* **Tray icon:** hover to see all times. Click to show or hide the widget. Right-click opens the menu.
+* **Taskbar:** choose **Position → left edge**, **right (next to the tray)** or **custom** (drag them anywhere along the taskbar). Click them for a pop-up with every clock, which rises out of the taskbar. You can switch off the taskbar clocks entirely.
+* **Tray icon:** hover to see all times. Click to show or hide the widget. Right-click opens the menu. You can hide it with **Taskbar → Show tray icon**; alarm notifications still appear.
 
 ## Layouts (right-click → Layout)
 * **Table:** columns for ID, city, time, state (working / free / asleep), offset, and a dotted day-progress bar.
@@ -19,6 +22,9 @@ It's one native `.exe` of about 390 KB with no installer and no runtime. Setting
 * **Compact:** one prompt-style line per city.
 
 The status bar shows the mode on the left (`NORMAL`, `SHIFT` or `ALARM`), the next alarm countdown in the middle, and UTC time on the right.
+
+## Typography
+Words use the Windows system font, **Segoe UI Variable**, which switches between its Small, Text and Display optical cuts by size. Times and numbers use **Cascadia Mono**, whose tabular digits don't jitter as they tick. Hierarchy comes from weight and size together, secondary text is high-contrast, and ClearType is used wherever the panel is opaque. The taskbar pop-up's entrance animation respects Windows' *Animation effects* setting.
 
 ## Themes
 ![Themes](docs/themes.png)
