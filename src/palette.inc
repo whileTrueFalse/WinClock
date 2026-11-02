@@ -1,4 +1,4 @@
-// ---------------------------------------------------------------- command palette (Ctrl+Alt+Space)
+// ---------------------------------------------------------------- command palette (Ctrl+Alt+K by default)
 // Type "tokyo", "add berlin", "3pm ny thu", "meeting", "theme paper"... Enter runs the highlighted line.
 struct PalItem { std::wstring title, sub; std::function<void()> run; bool keepOpen = false; };
 static HWND g_pal = nullptr, g_palEdit = nullptr;
@@ -238,7 +238,7 @@ static void ConvertTo(const WhenResult& w) {
 static void ConvertClipboard() {
     std::wstring text = ClipboardText();
     WhenResult w; std::wstring err;
-    if (text.empty()) { Balloon(L"Nothing to convert", L"Copy some text with a time first, e.g. “3pm EST Thursday”, then press Ctrl+Alt+V."); return; }
+    if (text.empty()) { Balloon(L"Nothing to convert", L"Copy some text with a time first, e.g. “3pm EST Thursday”, then press " + HotkeyText(S.hkConvert) + L"."); return; }
     if (!ParseWhen(text, w, &err)) {
         std::wstring snip = text.substr(0, 60); for (auto& c : snip) if (c == L'\r' || c == L'\n') c = L' ';
         Balloon(L"No time found in the clipboard", L"“" + snip + (text.size() > 60 ? L"…" : L"") + L"”\n" + err);

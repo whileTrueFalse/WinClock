@@ -139,6 +139,7 @@ struct Settings {
     bool tbShow = true, tbRotate = false, tbLabels = true, trayIcon = true; int tbOffset = -1, tbAnchor = 0;
     int workStart = 9, workEnd = 18, cols = 3, flyLayout = L_ANALOG;
     bool hotkey = true, chime = false;
+    WORD hkShow = 0x0657, hkConvert = 0x0656, hkPalette = 0x064B;   // HOTKEYF mods << 8 | VK: Ctrl+Alt+W / V / K
     int tbWhich = 0;              // 0 = every clock on the taskbar, 1 = only the ticked ones
     bool tbAllMon = false, trayTime = false, updates = false, autoProfile = false;
     std::wstring profile = L"Default";
@@ -625,6 +626,38 @@ static void Balloon(const std::wstring& title, const std::wstring& text) {
     n.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON | NIIF_NOSOUND; n.hBalloonIcon = g_bigIcon;
     Shell_NotifyIconW(NIM_MODIFY, &n);
 }
+
+// ---------------------------------------------------------------- global shortcuts (user-configurable)
+static std::wstring HotkeyText(WORD hk) {
+    BYTE vk = LOBYTE(hk), f = HIBYTE(hk);
+    if (!vk) return L"none";
+    std::wstring t;
+    if (f & HOTKEYF_CONTROL) t += L"Ctrl+";
+    if (f & HOTKEYF_ALT) t += L"Alt+";
+    if (f & HOTKEYF_SHIFT) t += L"Shift+";
+    wchar_t name[64] = L"";
+    UINT sc = MapVirtualKeyW(vk, MAPVK_VK_TO_VSC);
+    LONG lp = (LONG)(sc << 16);
+    if ((f & HOTKEYF_EXT) || (vk >= VK_PRIOR && vk <= VK_HELP)) lp |= 1 << 24;
+    if (vk == VK_SPACE) wcscpy(name, L"Space");
+    else if (!GetKeyNameTextW(lp, name, 64)) swprintf(name, 64, L"Key %u", vk);
+    return t + name;
+}
+static std::wstring HotkeyTab(WORD hk) { return S.hotkey && LOBYTE(hk) ? L"\t" + HotkeyText(hk) : L""; }
+static void RegisterHotkeys(bool report) {
+    for (int id = 1; id <= 3; id++) UnregisterHotKey(g_main, id);
+    if (!S.hotkey) return;
+    WORD keys[3] = { S.hkShow, S.hkConvert, S.hkPalette };
+    const wchar_t* what[3] = { L"show/hide widget", L"convert copied time", L"command palette" };
+    std::wstring failed;
+    for (int i = 0; i < 3; i++) {
+        BYTE vk = LOBYTE(keys[i]), f = HIBYTE(keys[i]); if (!vk) continue;
+        UINT mods = MOD_NOREPEAT | ((f & HOTKEYF_CONTROL) ? MOD_CONTROL : 0) | ((f & HOTKEYF_ALT) ? MOD_ALT : 0) | ((f & HOTKEYF_SHIFT) ? MOD_SHIFT : 0);
+        if (!RegisterHotKey(g_main, i + 1, mods, vk)) failed += (failed.empty() ? L"" : L", ") + HotkeyText(keys[i]) + L" (" + what[i] + L")";
+    }
+    if (report && !failed.empty())
+        Balloon(L"Shortcut already in use", failed + L" is taken by another app. Pick a different key in Settings → General.");
+}
 static void PlayAlert() {
     if (!PlaySoundW(L"Notification.Reminder", nullptr, SND_ALIAS | SND_ASYNC | SND_NODEFAULT)) MessageBeep(MB_ICONASTERISK);
 }
@@ -776,6 +809,8 @@ static void LoadSettings() {
     S.workEnd = std::clamp(IniInt(s, L"WorkEnd", 18), 1, 24);
     S.cols = std::clamp(IniInt(s, L"AnalogColumns", 3), 1, 8);
     S.hotkey = IniInt(s, L"Hotkey", 1) != 0;
+    S.hkShow = (WORD)IniInt(s, L"HotkeyShow", 0x0657); S.hkConvert = (WORD)IniInt(s, L"HotkeyConvert", 0x0656);
+    S.hkPalette = (WORD)IniInt(s, L"HotkeyPalette", 0x064B);
     S.chime = IniInt(s, L"HourlyChime", 0) != 0;
     S.tbWhich = IniInt(s, L"TaskbarWhich", 0) ? 1 : 0;
     S.tbAllMon = IniInt(s, L"TaskbarAllMonitors", 0) != 0;
@@ -802,7 +837,7 @@ static void SaveSettings() {
     IniPutI(s, L"Visible", S.visible); IniPutI(s, L"Taskbar", S.tbShow);
     IniPut(s, L"TaskbarMode", S.tbRotate ? L"rotate" : L"all"); IniPutI(s, L"TaskbarLabels", S.tbLabels);
     IniPutI(s, L"TaskbarOffset", S.tbOffset); IniPut(s, L"TaskbarAnchor", S.tbAnchor == 1 ? L"left" : S.tbAnchor == 2 ? L"custom" : L"right"); IniPutI(s, L"TrayIcon", S.trayIcon); IniPutI(s, L"WorkStart", S.workStart); IniPutI(s, L"WorkEnd", S.workEnd);
-    IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HourlyChime", S.chime);
+    IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HotkeyShow", S.hkShow); IniPutI(s, L"HotkeyConvert", S.hkConvert); IniPutI(s, L"HotkeyPalette", S.hkPalette); IniPutI(s, L"HourlyChime", S.chime);
     IniPutI(s, L"TaskbarWhich", S.tbWhich); IniPutI(s, L"TaskbarAllMonitors", S.tbAllMon); IniPutI(s, L"TrayShowsTime", S.trayTime);
     IniPutI(s, L"CheckUpdates", S.updates); IniPutI(s, L"LastUpdateCheck", S.lastUpdDay);
     IniPut(s, L"Profile", S.profile); IniPutI(s, L"AutoProfile", S.autoProfile);
@@ -2172,7 +2207,7 @@ static HMENU BuildMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
 
     HMENU plan = CreatePopupMenu();
-    AppendMenuW(plan, MF_STRING, ID_CONVERT, L"Convert time from clipboard\tCtrl+Alt+V");
+    AppendMenuW(plan, MF_STRING, ID_CONVERT, (L"Convert time from clipboard" + HotkeyTab(S.hkConvert)).c_str());
     AppendMenuW(plan, MF_STRING, ID_JUMP, L"Jump to a time…");
     AppendMenuW(plan, MF_STRING | (g_clocks.size() < 2 ? MF_GRAYED : 0), ID_MEET, L"Find next meeting slot");
     AppendMenuW(plan, MF_STRING, ID_CARD, g_shift ? L"Meeting card / invite for this time…" : L"Meeting card / invite…");
@@ -2279,7 +2314,7 @@ static HMENU BuildMenu() {
     AppendMenuW(m, MF_POPUP, (UINT_PTR)tb, L"Taskbar");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
 
-    AppendMenuW(m, MF_STRING, ID_PALETTE, L"Command palette…\tCtrl+Alt+Space");
+    AppendMenuW(m, MF_STRING, ID_PALETTE, (L"Command palette…" + HotkeyTab(S.hkPalette)).c_str());
     AppendMenuW(m, MF_STRING, ID_SETTINGS, L"Settings…");
     HMENU share = CreatePopupMenu();
     AppendMenuW(share, MF_STRING, ID_SHARE_EXPORT, L"Copy share code for these clocks");
@@ -2287,7 +2322,7 @@ static HMENU BuildMenu() {
     AppendMenuW(m, MF_POPUP, (UINT_PTR)share, L"Share setup");
     if (g_shift) AppendMenuW(m, MF_STRING, ID_RESETSHIFT, (L"Back to now (shifted " + FmtShift() + L")").c_str());
     AppendMenuW(m, MF_STRING, ID_COPY, L"Copy all times");
-    AppendMenuW(m, MF_STRING, ID_TOGGLEVIS, S.visible ? L"Hide widget\tCtrl+Alt+W" : L"Show widget\tCtrl+Alt+W");
+    AppendMenuW(m, MF_STRING, ID_TOGGLEVIS, (std::wstring(S.visible ? L"Hide widget" : L"Show widget") + HotkeyTab(S.hkShow)).c_str());
     chk(m, ID_STARTUP, L"Start with Windows", StartupEnabled());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     HMENU help = CreatePopupMenu();
@@ -2426,9 +2461,9 @@ static void HandleCommand(int id) {
         case ID_ABOUT:
             MessageBoxW(nullptr,
                 (std::wstring(L"WinClock " APP_VERSION L" — world clocks for your desktop and taskbar.\n\n"
-                L"• Ctrl+Alt+V: convert a time you copied (“3pm EST Thu”) into every clock.\n"
-                L"• Ctrl+Alt+Space: command palette (tokyo, add berlin, 3pm ny, meeting…).\n"
-                L"• Ctrl+Alt+W: show or hide the widget.\n"
+                L"• " + HotkeyText(S.hkConvert) + L": convert a time you copied (“3pm EST Thu”) into every clock.\n"
+                L"• " + HotkeyText(S.hkPalette) + L": command palette (tokyo, add berlin, 3pm ny, meeting…).\n"
+                L"• " + HotkeyText(S.hkShow) + L": show or hide the widget. (Change these in Settings → General.)\n"
                 L"• Mouse wheel over the widget: move time ±15 min (Shift: ±1 h); middle-click to go back to now.\n"
                 L"• Ctrl + wheel: resize. Hover any clock for details; hover a taskbar clock for its day.\n"
                 L"• Plan menu: meeting card & .ics invite, pinned moments, fairness report, daylight-saving radar.\n\n"
@@ -2912,11 +2947,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     g_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, WinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
     WTSRegisterSessionNotification(g_main, NOTIFY_FOR_THIS_SESSION);
     g_powerNotify = RegisterPowerSettingNotification(g_main, &kDisplayState, DEVICE_NOTIFY_WINDOW_HANDLE);
-    if (S.hotkey) {
-        RegisterHotKey(g_main, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'W');
-        RegisterHotKey(g_main, 2, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'V');
-        RegisterHotKey(g_main, 3, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SPACE);
-    }
+    RegisterHotkeys(true);
     ComputeDst(true);
 
 #ifdef PREVIEW_BUILD

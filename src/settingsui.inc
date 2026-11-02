@@ -11,6 +11,7 @@ static std::wstring NoAmp(const wchar_t* s) { std::wstring r = s; r.erase(std::r
 static void ApplyAndRefresh() { SaveSettings(); ApplyWidgetStyle(); if (S.trayIcon) AddTrayIcon(); else RemoveTrayIcon(); UpdateTrayIconImage(true); RefreshAll(); }
 static void ChangedPage(HWND d) { PropSheet_Changed(GetParent(d), d); }
 
+static bool g_hkChanged = false;
 static INT_PTR CALLBACK SetGeneralProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_INITDIALOG: {
@@ -27,11 +28,22 @@ static INT_PTR CALLBACK SetGeneralProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         FillCombo(d, IDC_SG_WS, hs, S.workStart); FillCombo(d, IDC_SG_WE, he, S.workEnd - 1);
         Check(d, IDC_SG_24H, S.h24); Check(d, IDC_SG_SECS, S.secs); Check(d, IDC_SG_DATE, S.date); Check(d, IDC_SG_CHIME, S.chime);
         Check(d, IDC_SG_STARTUP, StartupEnabled()); Check(d, IDC_SG_TOP, S.zmode == Z_TOP); Check(d, IDC_SG_LOCK, S.locked);
+        { int ids[3] = { IDC_SG_HKPAL, IDC_SG_HKCONV, IDC_SG_HKSHOW }; WORD v[3] = { S.hkPalette, S.hkConvert, S.hkShow };
+          for (int i = 0; i < 3; i++) {
+              HWND hk = GetDlgItem(d, ids[i]);
+              SendMessageW(hk, HKM_SETRULES, HKCOMB_NONE | HKCOMB_S, MAKELPARAM(HOTKEYF_CONTROL | HOTKEYF_ALT, 0));   // bare keys need Ctrl+Alt
+              SendMessageW(hk, HKM_SETHOTKEY, v[i] & ~(HOTKEYF_EXT << 8), 0);
+          } }
         return TRUE;
     }
-    case WM_COMMAND: if (HIWORD(wp) == CBN_SELCHANGE || HIWORD(wp) == BN_CLICKED) ChangedPage(d); break;
+    case WM_COMMAND: if (HIWORD(wp) == CBN_SELCHANGE || HIWORD(wp) == BN_CLICKED || HIWORD(wp) == EN_CHANGE) ChangedPage(d); break;
     case WM_NOTIFY:
         if (((NMHDR*)lp)->code == PSN_APPLY) {
+            WORD np = (WORD)SendDlgItemMessageW(d, IDC_SG_HKPAL, HKM_GETHOTKEY, 0, 0), nc = (WORD)SendDlgItemMessageW(d, IDC_SG_HKCONV, HKM_GETHOTKEY, 0, 0),
+                 ns = (WORD)SendDlgItemMessageW(d, IDC_SG_HKSHOW, HKM_GETHOTKEY, 0, 0);
+            bool hkChanged = np != S.hkPalette || nc != S.hkConvert || ns != S.hkShow;
+            S.hkPalette = np; S.hkConvert = nc; S.hkShow = ns;
+            if (hkChanged) g_hkChanged = true;
             S.layout = std::max(0, ComboSel(d, IDC_SG_LAYOUT)); S.theme = std::max(0, ComboSel(d, IDC_SG_THEME));
             S.scale = kScale[std::max(0, ComboSel(d, IDC_SG_SIZE))]; S.opacity = kOpa[std::max(0, ComboSel(d, IDC_SG_OPA))];
             S.workStart = std::max(0, ComboSel(d, IDC_SG_WS)); S.workEnd = std::max(0, ComboSel(d, IDC_SG_WE)) + 1;
@@ -193,6 +205,10 @@ static void SettingsWindow(int startPage = 0) {
     h.hwndParent = g_main; h.hInstance = g_inst; h.pszCaption = L"WinClock settings"; h.nPages = 4; h.ppsp = pg; h.nStartPage = startPage;
     LoadIconMetric(g_inst, MAKEINTRESOURCEW(IDI_APP), LIM_SMALL, &h.hIcon);
     SetForegroundWindow(g_main);
+    // Release our shortcuts while the sheet is open so the shortcut boxes can capture them.
+    for (int id = 1; id <= 3; id++) UnregisterHotKey(g_main, id);
+    g_hkChanged = false;
     PropertySheetW(&h);
+    RegisterHotkeys(g_hkChanged);
     open = false; TrimMemory();
 }

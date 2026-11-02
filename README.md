@@ -21,12 +21,13 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 | To… | Do this |
 |---|---|
 | Add cities or teammates | Menu → **Add clocks / countries…**, or **Settings → Clocks & people** |
-| Do anything quickly | **Ctrl + Alt + Space** opens the command palette (try `3pm est thu`, `add Tokyo`, `theme paper`) |
+| Do anything quickly | **Ctrl + Alt + K** opens the command palette (try `3pm est thu`, `add Tokyo`, `theme paper`) |
 | Convert a time you copied | Copy text like "Tue 3pm PST", then press **Ctrl + Alt + V** |
 | Plan a meeting | Scroll over the clocks to move time, or Menu → **Plan** for the fairness check and meeting card |
 | Move the taskbar clocks | Menu → **Taskbar → Position** (left, right or drag) |
 | Change settings | Menu → **Settings…** |
 | Show or hide the widget | **Ctrl + Alt + W** |
+| Change a shortcut | **Settings → General → Keyboard shortcuts** |
 
 ## Features
 

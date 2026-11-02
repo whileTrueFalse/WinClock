@@ -129,7 +129,7 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 238, 210, 52, 14
 END
 
-IDD_SET_GENERAL DIALOGEX 0, 0, 300, 210
+IDD_SET_GENERAL DIALOGEX 0, 0, 300, 230
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 FONT 9, "Segoe UI", 400, 0, 0x1
 CAPTION "General"
@@ -153,10 +153,16 @@ BEGIN
     AUTOCHECKBOX    "Start with Windows", IDC_SG_STARTUP, 10, 130, 130, 10
     AUTOCHECKBOX    "Lock widget position", IDC_SG_LOCK, 150, 130, 140, 10
     AUTOCHECKBOX    "Keep widget always on top (instead of on the desktop)", IDC_SG_TOP, 10, 146, 280, 10
-    LTEXT           "Shortcuts: Ctrl+Alt+V convert a copied time · Ctrl+Alt+Space command palette · Ctrl+Alt+W show/hide", -1, 10, 172, 280, 20
+    LTEXT           "Keyboard shortcuts: click a box and press the keys you want (Backspace = none).", -1, 10, 166, 280, 10
+    LTEXT           "Command palette:", -1, 10, 182, 80, 10
+    CONTROL         "", IDC_SG_HKPAL, "msctls_hotkey32", WS_BORDER | WS_TABSTOP, 90, 180, 120, 13
+    LTEXT           "Convert copied time:", -1, 10, 198, 80, 10
+    CONTROL         "", IDC_SG_HKCONV, "msctls_hotkey32", WS_BORDER | WS_TABSTOP, 90, 196, 120, 13
+    LTEXT           "Show / hide widget:", -1, 10, 214, 80, 10
+    CONTROL         "", IDC_SG_HKSHOW, "msctls_hotkey32", WS_BORDER | WS_TABSTOP, 90, 212, 120, 13
 END
 
-IDD_SET_CLOCKS DIALOGEX 0, 0, 300, 210
+IDD_SET_CLOCKS DIALOGEX 0, 0, 300, 230
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 FONT 9, "Segoe UI", 400, 0, 0x1
 CAPTION "Clocks && people"
@@ -172,7 +178,7 @@ BEGIN
     LTEXT           "Double-click a row to set the person, working hours, days off, holidays and away dates.", -1, 10, 194, 280, 10
 END
 
-IDD_SET_TASKBAR DIALOGEX 0, 0, 300, 210
+IDD_SET_TASKBAR DIALOGEX 0, 0, 300, 230
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 FONT 9, "Segoe UI", 400, 0, 0x1
 CAPTION "Taskbar"
@@ -192,7 +198,7 @@ BEGIN
     LTEXT           "Hover a taskbar clock to peek at its day. Click for all clocks. If they don't fit side by side, they rotate automatically.", -1, 10, 146, 280, 30
 END
 
-IDD_SET_MORE DIALOGEX 0, 0, 300, 210
+IDD_SET_MORE DIALOGEX 0, 0, 300, 230
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD | WS_CAPTION
 FONT 9, "Segoe UI", 400, 0, 0x1
 CAPTION "Calendar && updates"
@@ -211,8 +217,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 2,2,0,0
-PRODUCTVERSION 2,2,0,0
+FILEVERSION 2,2,2,0
+PRODUCTVERSION 2,2,2,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -222,9 +228,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "WinClock"
       VALUE "FileDescription", "WinClock - World clocks for desktop and taskbar"
-      VALUE "FileVersion", "2.2.0"
+      VALUE "FileVersion", "2.2.2"
       VALUE "ProductName", "WinClock"
-      VALUE "ProductVersion", "2.2.0"
+      VALUE "ProductVersion", "2.2.2"
       VALUE "OriginalFilename", "WinClock.exe"
     END
   END
