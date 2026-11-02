@@ -1957,7 +1957,7 @@ static void HandleCommand(int id) {
         case ID_RELOAD: LoadSettings(); ApplyWidgetStyle(); RefreshAll(); return;
         case ID_ABOUT:
             MessageBoxW(nullptr,
-                (std::wstring(L"WinClock 2.0 — world clocks for your desktop and taskbar.\n\n"
+                (std::wstring(L"WinClock 2.1 — world clocks for your desktop and taskbar.\n\n"
                 L"• Drag the widget to move it (snaps to screen edges).\n"
                 L"• Mouse wheel over the widget: shift time ±15 min (Shift: ±1 h) to plan meetings.\n"
                 L"• Middle-click: reset the time shift.\n"
