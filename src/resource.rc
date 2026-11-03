@@ -217,8 +217,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 2,3,1,0
-PRODUCTVERSION 2,3,1,0
+FILEVERSION 2,4,0,0
+PRODUCTVERSION 2,4,0,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -228,9 +228,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "WinClock"
       VALUE "FileDescription", "WinClock - World clocks for desktop and taskbar"
-      VALUE "FileVersion", "2.3.1"
+      VALUE "FileVersion", "2.4.0"
       VALUE "ProductName", "WinClock"
-      VALUE "ProductVersion", "2.3.1"
+      VALUE "ProductVersion", "2.4.0"
       VALUE "OriginalFilename", "WinClock.exe"
     END
   END

@@ -33,6 +33,7 @@ static void PalBuild(const std::wstring& raw) {
     };
     auto hint = [&](const wchar_t* text, const wchar_t* sub) { std::wstring tx = text; add(tx, sub, [tx]() { SetWindowTextW(g_palEdit, tx.c_str()); SendMessageW(g_palEdit, EM_SETSEL, tx.size(), tx.size()); }, true); };
     if (t.empty()) {
+        hint(L"9pm india to germany", L"time calculator: any time, any two places");
         hint(L"3pm ny thu", L"convert a time into every clock");
         hint(L"add berlin", L"add a city (or a whole country: add australia)");
         hint(L"tokyo", L"what time is it there?");
@@ -95,9 +96,18 @@ static void PalBuild(const std::wstring& raw) {
         { L"convert", L"Convert time from clipboard", 240 }, { L"paste", L"Convert time from clipboard", 240 }, { L"profile", L"New profile…", 256 },
     };
     for (auto& k : kws) if (wcslen(k.w) >= t.size() ? wcsncmp(k.w, t.c_str(), t.size()) == 0 && t.size() >= 2 : false) { int cmd = k.cmd; add(k.title, L"command", [cmd]() { HandleCommand(cmd); }); }
+    // time calculator: a time and two or more places ("9pm in india, what time in germany")
+    CalcAnswer ca;
+    bool calc = TimeCalc(q, ca);
+    if (calc) {
+        for (auto& r : ca.rows) { std::wstring c1 = r.copy; if (g_palItems.size() < 7) add(r.title, r.sub + L"  ·  Enter copies", [c1]() { CopyText(c1); }); }
+        if (ca.rows.size() > 1) { std::wstring copy = ca.copy; add(L"Copy all of these", L"one line per place", [copy]() { CopyText(copy); }); }
+        WhenResult cw = ca.when;
+        add(L"Show this moment on all my clocks", L"moves the widget to that time; middle-click it to come back", [cw]() { ConvertTo(cw); });
+    }
     // a time expression
     WhenResult w;
-    if (ParseWhen(q, w)) {
+    if (!calc && ParseWhen(q, w)) {
         std::wstring line = ConversionLine(w);
         add(line, L"Enter: show it on the clocks", [w]() { ConvertTo(w); });
         add(L"Copy: " + line, L"copy the conversion", [line]() { CopyText(line); });
@@ -218,7 +228,7 @@ static void ShowPalette() {
     g_palFont = CreateFontW(-(int)(18 * s), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI Variable Text");
     g_palEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 0, 0, 10, 10, g_pal, nullptr, g_inst, nullptr);
     SendMessageW(g_palEdit, WM_SETFONT, (WPARAM)g_palFont, TRUE);
-    SendMessageW(g_palEdit, EM_SETCUEBANNER, TRUE, (LPARAM)L"3pm ny thu · add berlin · tokyo · meeting · settings");
+    SendMessageW(g_palEdit, EM_SETCUEBANNER, TRUE, (LPARAM)L"9pm india to germany · 3pm ny thu · add berlin · meeting");
     g_palEditOld = (WNDPROC)SetWindowLongPtrW(g_palEdit, GWLP_WNDPROC, (LONG_PTR)PalEditProc);
     PalBuild(L"");
     int W = (int)(640 * s);

@@ -362,6 +362,7 @@ static long long DayNum(const SYSTEMTIME& st) {
     SystemTimeToFileTime(&d, &f); return (long long)(FtU(f) / (TPM * 1440));
 }
 static std::wstring Lower(std::wstring s) { for (auto& c : s) c = (wchar_t)towlower(c); return s; }
+static std::wstring Upper(std::wstring s) { for (auto& c : s) c = (wchar_t)towupper(c); return s; }
 static std::wstring Fmt(const wchar_t* f, ...) {
     wchar_t b[512]; va_list ap; va_start(ap, f); vswprintf(b, 512, f, ap); va_end(ap); return b;
 }
@@ -2235,6 +2236,7 @@ static HMENU BuildMenu() {
     AppendMenuW(plan, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(plan, MF_STRING, ID_FAIR, L"Fairness report…");
     AppendMenuW(plan, MF_STRING, ID_DST, L"Daylight-saving radar…");
+    AppendMenuW(plan, MF_STRING, ID_PALETTE, (L"Time calculator…" + HotkeyTab(S.hkPalette)).c_str());
     AppendMenuW(m, MF_POPUP, (UINT_PTR)plan, L"Plan");
     HMENU al = CreatePopupMenu();
     AppendMenuW(al, MF_STRING, ID_ALARM_ADD, L"Add alarm or countdown…");

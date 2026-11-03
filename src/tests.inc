@@ -68,6 +68,32 @@ static void RunTests() {
     check(L"2026-11-20 14:00 UTC", L"UTC", 14, 0, 5);
     check(L"7:45pm sydney", L"AUS Eastern Standard Time", 19, 45, -1);
     { WhenResult w; Expect(!ParseWhen(L"we shipped 2026 builds", w), L"no time in \"we shipped 2026 builds\""); }
+    // --- time calculator
+    {
+        auto calc = [](const wchar_t* q, CalcAnswer& a) { a = CalcAnswer{}; return TimeCalc(q, a); };
+        auto first = [](const CalcAnswer& a) { return a.rows.empty() ? std::wstring(L"(none)") : a.rows[0].title; };
+        CalcAnswer a;
+        bool ok = calc(L"9:00 pm in india, what time it would be in germany on nov 10 2026", a);
+        Expect(ok && a.rows.size() == 1 && first(a).find(L"4:30 PM") == 0 && first(a).find(L"Germany") != std::wstring::npos,
+               L"calc: 9pm India -> Germany = 4:30 PM: " + first(a));
+        Expect(ok && a.rows.size() == 1 && a.rows[0].sub.find(L"4 h 30 min behind India") != std::wstring::npos, L"calc: Germany 4 h 30 min behind India: " + (ok ? a.rows[0].sub : L""));
+        ok = calc(L"3pm london to tokyo nov 10 2026", a);
+        Expect(ok && first(a).find(L"12:00 AM") == 0 && first(a).find(L"next day") != std::wstring::npos, L"calc: 3pm London -> Tokyo = 12 AM next day: " + first(a));
+        ok = calc(L"germany 4:30pm nov 10 2026 in india", a);
+        Expect(ok && first(a).find(L"9:00 PM") == 0, L"calc: 4:30pm Germany -> India = 9 PM: " + first(a));
+        ok = calc(L"10am usa to india nov 10 2026", a);
+        Expect(ok && first(a).find(L"8:30 PM") == 0, L"calc: 10am USA (New York) -> India = 8:30 PM: " + first(a));
+        ok = calc(L"9pm india to usa nov 10 2026", a);
+        Expect(ok && a.rows.size() == 4 && first(a).find(L"10:30 AM") == 0 && a.rows[3].title.find(L"7:30 AM") == 0,
+               L"calc: India -> USA gives 4 zones (NY 10:30 AM .. LA 7:30 AM): " + first(a) + L" / " + (a.rows.size() > 3 ? a.rows[3].title : L""));
+        ok = calc(L"what time is it in germany", a);
+        Expect(ok && a.rows.size() == 1 && a.rows[0].sub.find(L"right now") == 0, L"calc: what time is it in germany -> now");
+        ok = calc(L"9pm, what time would it be in japan", a);
+        Expect(ok && a.rows.size() == 1 && first(a).find(L"Japan") != std::wstring::npos, L"calc: 9pm (your time) -> Japan: " + first(a));
+        Expect(!calc(L"3pm tokyo", a), L"calc: a single place stays a normal conversion");
+        ok = calc(L"9 pm IST to CET nov 10 2026", a);
+        Expect(ok && first(a).find(L"4:30 PM") == 0, L"calc: 9pm IST -> CET = 4:30 PM: " + first(a));
+    }
     { WhenResult w; ParseWhen(L"3pm EST", w); std::wstring line = ConversionLine(w);
       Expect(line.find(L"New York") != std::wstring::npos && line.find(L"Alex") != std::wstring::npos, L"conversion line: " + line); }
     g_clocks.pop_back();

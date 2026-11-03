@@ -22,6 +22,7 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 |---|---|
 | Add cities or teammates | Menu → **Add clocks / countries…**, or **Settings → Clocks & people** |
 | Do anything quickly | **Ctrl + Alt + K** opens the command palette (try `3pm est thu`, `add Tokyo`, `theme paper`) |
+| Convert between places | Press **Ctrl + Alt + K** and type e.g. `9pm in india, what time in germany` or `3pm london to tokyo` |
 | Convert a time you copied | Copy text like "Tue 3pm PST", then press **Ctrl + Alt + V** |
 | Plan a meeting | Scroll over the clocks to move time, or Menu → **Plan** for the fairness check and meeting card |
 | Move the taskbar clocks | Menu → **Taskbar → Position** (left, right or drag) |
@@ -44,6 +45,7 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 - Out-of-office dates and short notes
 
 **Planning**
+- Time calculator: type "9pm in India, what time in Germany?" and get the answer for 60+ countries and 130+ cities
 - Command palette and clipboard time converter
 - Meeting card you can copy or save as a calendar invite (.ics)
 - Fairness check: finds the slot that's least painful for everyone over the next 4 weeks
