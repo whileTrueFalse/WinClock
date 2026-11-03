@@ -617,7 +617,9 @@ static float FooterH(float s) { return NextAlarmIdx() >= 0 ? 28 * s : 0; }
 
 static bool g_trayAdded = false;
 static void AddTrayIcon();
+static bool g_balloonUpdate = false;   // set right after showing the update balloon; any other balloon clears it
 static void Balloon(const std::wstring& title, const std::wstring& text) {
+    g_balloonUpdate = false;
     if (!g_trayAdded) { AddTrayIcon(); if (!S.trayIcon) SetTimer(g_main, 5, 12000, nullptr); }
     if (!g_nid.hWnd) return;
     NOTIFYICONDATAW n = g_nid; n.uFlags = NIF_INFO;
@@ -815,7 +817,7 @@ static void LoadSettings() {
     S.tbWhich = IniInt(s, L"TaskbarWhich", 0) ? 1 : 0;
     S.tbAllMon = IniInt(s, L"TaskbarAllMonitors", 0) != 0;
     S.trayTime = IniInt(s, L"TrayShowsTime", 0) != 0;
-    S.updates = IniInt(s, L"CheckUpdates", 0) != 0;
+    S.updates = IniInt(s, L"UpdateCheck", 1) != 0;   // new key, so it is on for everyone by default
     S.lastUpdDay = IniInt(s, L"LastUpdateCheck", 0);
     S.profile = IniStr(s, L"Profile", L"Default"); if (S.profile.empty()) S.profile = L"Default";
     S.autoProfile = IniInt(s, L"AutoProfile", 0) != 0;
@@ -839,7 +841,7 @@ static void SaveSettings() {
     IniPutI(s, L"TaskbarOffset", S.tbOffset); IniPut(s, L"TaskbarAnchor", S.tbAnchor == 1 ? L"left" : S.tbAnchor == 2 ? L"custom" : L"right"); IniPutI(s, L"TrayIcon", S.trayIcon); IniPutI(s, L"WorkStart", S.workStart); IniPutI(s, L"WorkEnd", S.workEnd);
     IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HotkeyShow", S.hkShow); IniPutI(s, L"HotkeyConvert", S.hkConvert); IniPutI(s, L"HotkeyPalette", S.hkPalette); IniPutI(s, L"HourlyChime", S.chime);
     IniPutI(s, L"TaskbarWhich", S.tbWhich); IniPutI(s, L"TaskbarAllMonitors", S.tbAllMon); IniPutI(s, L"TrayShowsTime", S.trayTime);
-    IniPutI(s, L"CheckUpdates", S.updates); IniPutI(s, L"LastUpdateCheck", S.lastUpdDay);
+    IniPutI(s, L"UpdateCheck", S.updates); IniPutI(s, L"LastUpdateCheck", S.lastUpdDay);
     IniPut(s, L"Profile", S.profile); IniPutI(s, L"AutoProfile", S.autoProfile);
     IniPut(L"Calendar", L"Url", S.calUrl); IniPutI(L"Calendar", L"Enabled", S.calOn); IniPutI(L"Calendar", L"WarnMinutes", S.calWarn);
 }
@@ -1399,6 +1401,7 @@ static void PaintView(View& v) {
             if (mid.empty()) mid = DstShort();
             if (mid.empty() && ai >= 0) mid = AlarmFooterText(ai);
             if (mid.empty()) mid = CalStatusText(12 * 60);
+            if (mid.empty() && !g_updTag.empty()) mid = L"update " + g_updTag + L" available \u00b7 right-click to install";
             if (mid.empty()) mid = Fmt(L"~/winclock \u00b7 %d clock%ls", (int)g_clocks.size(), g_clocks.size() == 1 ? L"" : L"s") +
                                    (S.profile != L"Default" ? L" \u00b7 " + Lower(S.profile) : L"");
         }
@@ -2157,7 +2160,7 @@ enum {
     ID_COLS = 190, ID_FLY = 200, ID_WORK = 210, ID_ALARM_ADD = 230, ID_JUMP, ID_MEET, ID_CHIME,
     ID_CONVERT = 240, ID_CARD = 241, ID_PIN = 242, ID_FAIR = 243, ID_DST = 244, ID_PALETTE = 245, ID_SETTINGS = 246,
     ID_SHARE_EXPORT = 247, ID_SHARE_IMPORT = 248, ID_CAL_CONNECT = 249, ID_CAL_TOGGLE = 250, ID_CAL_REFRESH = 251, ID_CAL_OFF = 252,
-    ID_UPD_TOGGLE = 253, ID_UPD_NOW = 254, ID_PROF_AUTO = 255, ID_PROF_NEW = 256, ID_PROF_DEL = 257,
+    ID_UPD_TOGGLE = 253, ID_UPD_NOW = 254, ID_UPD_INSTALL = 262, ID_PROF_AUTO = 255, ID_PROF_NEW = 256, ID_PROF_DEL = 257,
     ID_TB_WHICH_ALL = 258, ID_TB_WHICH_SEL = 259, ID_TB_ALLMON = 260, ID_TRAYTIME = 261,
     ID_MON = 300, ID_PROF = 320, ID_PIN_ITEM = 400, ID_TBCLOCK = 900, ID_CLOCK = 1000, ID_ALARMS = 2000
 };
@@ -2176,6 +2179,7 @@ static HMENU BuildMenu() {
         InsertMenuItemW(h, GetMenuItemCount(h), TRUE, &mi);
     };
     auto amp = [](std::wstring s) { std::wstring o; for (wchar_t c : s) { if (c == L'&') o += L"&&"; else o += c; } return o; };
+    if (!g_updTag.empty()) { AppendMenuW(m, MF_STRING, ID_UPD_INSTALL, (L"\u2B06  Update to WinClock " + g_updTag + L"…").c_str()); AppendMenuW(m, MF_SEPARATOR, 0, nullptr); }
     AppendMenuW(m, MF_STRING, ID_ADD, L"➕  Add clocks / countries…");
     HMENU clocks = CreatePopupMenu();
     for (int i = 0; i < (int)g_clocks.size(); i++) {
@@ -2326,7 +2330,7 @@ static HMENU BuildMenu() {
     chk(m, ID_STARTUP, L"Start with Windows", StartupEnabled());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     HMENU help = CreatePopupMenu();
-    chk(help, ID_UPD_TOGGLE, L"Check for updates weekly", S.updates);
+    chk(help, ID_UPD_TOGGLE, L"Check for updates when WinClock starts", S.updates);
     AppendMenuW(help, MF_STRING, ID_UPD_NOW, L"Check for updates now");
     AppendMenuW(help, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(help, MF_STRING, ID_OPENINI, L"Open settings file");
@@ -2448,7 +2452,8 @@ static void HandleCommand(int id) {
         case ID_CAL_TOGGLE: S.calOn = !S.calOn && !S.calUrl.empty(); g_calFetched = -1; if (S.calOn) CalTick(); break;
         case ID_CAL_REFRESH: g_calFetched = -1; CalTick(); return;
         case ID_CAL_OFF: S.calUrl.clear(); S.calOn = false; g_calEvents.clear(); g_calOcc.clear(); g_calError.clear(); break;
-        case ID_UPD_TOGGLE: S.updates = !S.updates; if (S.updates) { S.lastUpdDay = 0; UpdateTick(); } break;
+        case ID_UPD_TOGGLE: S.updates = !S.updates; if (S.updates) NetStart(NET_UPDATE, kReleasesApi); break;
+        case ID_UPD_INSTALL: OfferUpdate(); return;
         case ID_UPD_NOW: NetStart(NET_UPDATE_MANUAL, kReleasesApi); return;
         case ID_PROF_NEW: NewProfile(); break;
         case ID_PROF_DEL: DeleteProfile(); break;
@@ -2897,9 +2902,14 @@ static void RunPreviews() {
 #include "tests.inc"
 
 // ---------------------------------------------------------------- entry
-int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
     g_inst = inst;
+    bool updated = cmdLine && wcsstr(cmdLine, L"/updated");
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"WinClock.SingleInstance.Marshmallow");
+    if (GetLastError() == ERROR_ALREADY_EXISTS && updated && mutex) {   // the old copy is closing; wait for it
+        DWORD w = WaitForSingleObject(mutex, 15000);
+        if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED) SetLastError(0);
+    }
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         HWND other = FindWindowW(L"WinClockMain", nullptr); if (other) PostMessageW(other, WM_APP_SHOW, 0, 0);
         return 0;
@@ -2956,6 +2966,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int) {
     RefreshAll();
     UpdateTrayIconImage(true);
     CalTick(); UpdateTick();
+    CleanupOldExe();
+    if (updated) Balloon(L"WinClock is up to date", L"Updated to WinClock " APP_VERSION L". Your clocks and settings are kept.");
     ScheduleAlarmTimer();
     TrimMemory();
 #endif

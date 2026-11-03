@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------- networking (only when you turn it on)
-// Two features touch the network, both off by default: the calendar link and the weekly update check.
+// Two features touch the network: the update check (on by default; it only asks GitHub for the latest
+// version number) and the calendar link (off until you add one).
 // Requests run on a short-lived background thread; results come back to the UI thread as WM_APP_NET.
 
-enum { NET_CAL = 1, NET_UPDATE = 2, NET_UPDATE_MANUAL = 3 };
+enum { NET_CAL = 1, NET_UPDATE = 2, NET_UPDATE_MANUAL = 3, NET_DOWNLOAD = 4 };
 struct NetJob { int kind; std::wstring url; std::string body; DWORD status = 0; };
-static volatile LONG g_netBusy[4] = {};
+static volatile LONG g_netBusy[8] = {};
 
 static bool HttpGet(const std::wstring& url, std::string& out, DWORD& status, size_t maxBytes = 4 << 20) {
     URL_COMPONENTS uc{ sizeof(uc) };
@@ -73,6 +74,7 @@ static long long g_calFetched = -1, g_calExpanded = -1;
 static std::wstring g_calError;
 static std::vector<long long> g_calWarned;
 static std::wstring g_balloonUrl;
+static std::wstring g_updTag;          // newer release found on GitHub, e.g. "v2.3.0"
 
 static std::wstring IanaToWindows(const std::wstring& z) {
     static const std::pair<const wchar_t*, const wchar_t*> m[] = {
@@ -299,13 +301,13 @@ static void CalTick() {   // every minute
         std::wstring body;
         for (size_t i = 0; i < g_clocks.size() && i < 5; i++) body += DisplayName((int)i) + L"  " + FmtHMFull(ClockAt(g_clocks[i], (ULONGLONG)o.start * TPM).st) + L"\n";
         if (!e.link.empty()) body += L"Click to join";
-        g_balloonUrl = e.link;
+        g_balloonUrl = e.link; g_balloonUpdate = false;
         Balloon((e.title.empty() ? L"Meeting" : e.title) + (left ? Fmt(L" in %lld min", left) : L" starts now"), body);
     }
     if (g_calWarned.size() > 200) g_calWarned.erase(g_calWarned.begin(), g_calWarned.begin() + 100);
 }
 
-// ---------------------------------------------------------------- update check (opt-in)
+// ---------------------------------------------------------------- update check (at startup, then daily)
 static bool NewerVersion(const std::wstring& tag, const std::wstring& cur) {
     int a[3] = {}, b[3] = {};
     swscanf(tag.c_str() + (tag.size() && (tag[0] == L'v' || tag[0] == L'V')), L"%d.%d.%d", &a[0], &a[1], &a[2]);
@@ -320,12 +322,79 @@ static std::wstring JsonField(const std::string& j, const char* key) {
     return FromUtf8(j.substr(p + 1, q - p - 1));
 }
 static const wchar_t* kReleasesApi = L"https://api.github.com/repos/whileTrueFalse/WinClock/releases/latest";
+static const wchar_t* kReleasesPage = L"https://github.com/whileTrueFalse/WinClock/releases/latest";
+// Called every minute. The first check happens about a minute after WinClock starts (so the network is up
+// after sign-in), then once a day while it keeps running.
 static void UpdateTick() {
-    if (!S.updates) return;
-    int today = (int)(NowMin() / 1440);
-    if (today - S.lastUpdDay < 7) return;
-    S.lastUpdDay = today; SaveSettings();
+    static long long lastCheck = -1, started = -1;
+    long long now = NowMin();
+    if (started < 0) started = now;
+    if (!S.updates || now == started) return;
+    if (lastCheck >= 0 && now - lastCheck < 1440) return;
+    lastCheck = now; S.lastUpdDay = (int)(now / 1440); SaveSettings();
     NetStart(NET_UPDATE, kReleasesApi);
+}
+static bool SafeTag(const std::wstring& t) {
+    if (t.empty() || t.size() > 20) return false;
+    for (wchar_t c : t) if (!(iswdigit(c) || c == L'.' || c == L'v' || c == L'V')) return false;
+    return true;
+}
+static void OfferUpdate() {
+    if (!SafeTag(g_updTag)) return;
+    int r = MessageBoxW(nullptr,
+        (L"WinClock " + g_updTag + L" is available. You have " APP_VERSION L".\n\n"
+         L"Update now? It downloads in a few seconds and WinClock restarts by itself. Your clocks and settings are kept.\n\n"
+         L"Yes: update now     No: later     Cancel: see what's new").c_str(),
+        L"WinClock update", MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SETFOREGROUND);
+    if (r == IDCANCEL) { ShellExecuteW(nullptr, L"open", (L"https://github.com/whileTrueFalse/WinClock/releases/tag/" + g_updTag).c_str(), nullptr, nullptr, SW_SHOWNORMAL); return; }
+    if (r != IDYES) return;
+    NetStart(NET_DOWNLOAD, L"https://github.com/whileTrueFalse/WinClock/releases/download/" + g_updTag + L"/WinClock.exe");
+}
+static std::wstring ExePath() { wchar_t p[MAX_PATH]; DWORD n = GetModuleFileNameW(nullptr, p, MAX_PATH); return std::wstring(p, n); }
+static void UpdateFailed(const std::wstring& why) {
+    if (MessageBoxW(nullptr, (L"The update couldn't be installed: " + why + L"\n\nOpen the download page instead?").c_str(),
+                    L"WinClock update", MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND) == IDYES)
+        ShellExecuteW(nullptr, L"open", kReleasesPage, nullptr, nullptr, SW_SHOWNORMAL);
+}
+// Swap the running exe for the downloaded one: Windows lets a running exe be renamed, so the old file
+// moves aside to WinClock.exe.old, the new one takes its name, and the new copy starts with /updated.
+static void InstallUpdate(const std::string& body) {
+    if (body.size() < 100 * 1024 || body.compare(0, 2, "MZ") != 0) { UpdateFailed(L"the download looks incomplete."); return; }
+    std::wstring exe = ExePath(), fresh = exe + L".new", old = exe + L".old";
+    HANDLE f = CreateFileW(fresh.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { UpdateFailed(L"WinClock's folder isn't writable."); return; }
+    DWORD wrote = 0; bool ok = WriteFile(f, body.data(), (DWORD)body.size(), &wrote, nullptr) && wrote == body.size();
+    CloseHandle(f);
+    if (!ok) { DeleteFileW(fresh.c_str()); UpdateFailed(L"the disk may be full."); return; }
+    DeleteFileW(old.c_str());
+    if (!MoveFileExW(exe.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING)) { DeleteFileW(fresh.c_str()); UpdateFailed(L"couldn't replace WinClock.exe."); return; }
+    if (!MoveFileExW(fresh.c_str(), exe.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        MoveFileExW(old.c_str(), exe.c_str(), MOVEFILE_REPLACE_EXISTING); DeleteFileW(fresh.c_str());
+        UpdateFailed(L"couldn't replace WinClock.exe."); return;
+    }
+    // Keep "Apps & features" in step when WinClock was installed with the installer.
+    HKEY k;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WinClock", 0, KEY_READ | KEY_WRITE, &k) == ERROR_SUCCESS) {
+        wchar_t loc[MAX_PATH] = L""; DWORD sz = sizeof(loc);
+        std::wstring dir = exe.substr(0, exe.find_last_of(L"\\/"));
+        if (RegQueryValueExW(k, L"InstallLocation", nullptr, nullptr, (BYTE*)loc, &sz) == ERROR_SUCCESS && _wcsicmp(loc, dir.c_str()) == 0) {
+            std::wstring v = g_updTag.substr(g_updTag[0] == L'v' || g_updTag[0] == L'V');
+            RegSetValueExW(k, L"DisplayVersion", 0, REG_SZ, (const BYTE*)v.c_str(), (DWORD)((v.size() + 1) * sizeof(wchar_t)));
+        }
+        RegCloseKey(k);
+    }
+    STARTUPINFOW si{ sizeof(si) }; PROCESS_INFORMATION pi{};
+    std::wstring cmd = L"\"" + exe + L"\" /updated";
+    if (!CreateProcessW(exe.c_str(), &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        MessageBoxW(nullptr, L"The update is installed. Please start WinClock again.", L"WinClock update", MB_OK | MB_ICONINFORMATION);
+    } else { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+    PostMessageW(g_main, WM_CLOSE, 0, 0);   // the new copy waits for us to exit, then takes over
+}
+// After an update: remove the old exe (it may still be closing for a moment).
+static void CleanupOldExe() {
+    std::wstring old = ExePath() + L".old";
+    for (int i = 0; i < 25 && GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES; i++) { if (DeleteFileW(old.c_str())) break; Sleep(200); }
+    DeleteFileW((ExePath() + L".new").c_str());
 }
 static void HandleNet(NetJob* j) {
     g_netBusy[j->kind] = 0;
@@ -333,12 +402,20 @@ static void HandleNet(NetJob* j) {
         if (j->body.empty()) g_calError = j->status ? Fmt(L"calendar link returned HTTP %lu", j->status) : L"couldn't reach the calendar link";
         else if (j->body.find("BEGIN:VCALENDAR") == std::string::npos) g_calError = L"that link didn't return a calendar (.ics)";
         else { g_calError.clear(); ParseIcs(j->body); ExpandCalendar(); }
+    } else if (j->kind == NET_DOWNLOAD) {
+        if (j->body.empty()) UpdateFailed(j->status ? Fmt(L"GitHub returned HTTP %lu.", j->status) : L"couldn't reach GitHub.");
+        else InstallUpdate(j->body);
     } else {
-        std::wstring tag = JsonField(j->body, "tag_name"), url = JsonField(j->body, "html_url");
-        if (url.compare(0, 41, L"https://github.com/whileTrueFalse/WinClock") != 0) url = L"https://github.com/whileTrueFalse/WinClock/releases/latest";
-        if (!tag.empty() && NewerVersion(tag, APP_VERSION)) {
-            g_balloonUrl = url;
-            Balloon(L"WinClock " + tag + L" is available", L"You have " APP_VERSION L". Click to open the download page.");
+        std::wstring tag = JsonField(j->body, "tag_name");
+        if (SafeTag(tag) && NewerVersion(tag, APP_VERSION)) {
+            bool fresh = tag != g_updTag;
+            g_updTag = tag;
+            if (j->kind == NET_UPDATE_MANUAL) OfferUpdate();
+            else if (fresh) {
+                g_balloonUrl.clear();
+                Balloon(L"Update available: WinClock " + tag, L"You have " APP_VERSION L". Click here to update. It takes a few seconds.");
+                g_balloonUpdate = true;
+            }
         } else if (j->kind == NET_UPDATE_MANUAL) {
             if (tag.empty()) MessageBoxW(nullptr, L"Couldn't check for updates right now. Please try again later.", L"WinClock", MB_OK | MB_ICONINFORMATION);
             else MessageBoxW(nullptr, L"You're up to date (WinClock " APP_VERSION L").", L"WinClock", MB_OK | MB_ICONINFORMATION);
@@ -347,6 +424,7 @@ static void HandleNet(NetJob* j) {
     delete j;
 }
 static void OpenBalloonLink() {
+    if (g_balloonUpdate) { g_balloonUpdate = false; OfferUpdate(); return; }
     std::wstring u = g_balloonUrl; g_balloonUrl.clear();
     if (u.compare(0, 8, L"https://") == 0) ShellExecuteW(nullptr, L"open", u.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }

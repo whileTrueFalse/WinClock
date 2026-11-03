@@ -210,15 +210,15 @@ BEGIN
     COMBOBOX        IDC_SM_WARN, 172, 42, 118, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "", IDC_SM_CALSTATUS, 10, 60, 280, 10
     LTEXT           "Google: calendar settings → ""Secret address in iCal format"". Outlook: Calendar settings → Shared calendars → Publish → ICS. The link is stored only on this PC and fetched every 15 minutes.", -1, 10, 74, 280, 30
-    AUTOCHECKBOX    "Check GitHub for a new version once a week", IDC_SM_UPD, 10, 116, 200, 10
+    AUTOCHECKBOX    "Check for a new version when WinClock starts", IDC_SM_UPD, 10, 116, 200, 10
     PUSHBUTTON      "Check now", IDC_SM_UPDNOW, 220, 113, 70, 14
     AUTOCHECKBOX    "Switch profiles automatically (Work during work hours, Personal otherwise)", IDC_SM_AUTOPROF, 10, 138, 280, 10
-    LTEXT           "Nothing is sent anywhere unless you turn on the calendar link or update check.", -1, 10, 162, 280, 20
+    LTEXT           "The update check only asks GitHub for the latest version number. Your calendar link is only used if you add one.", -1, 10, 162, 280, 20
 END
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 2,2,2,0
-PRODUCTVERSION 2,2,2,0
+FILEVERSION 2,3,0,0
+PRODUCTVERSION 2,3,0,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -228,9 +228,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "WinClock"
       VALUE "FileDescription", "WinClock - World clocks for desktop and taskbar"
-      VALUE "FileVersion", "2.2.2"
+      VALUE "FileVersion", "2.3.0"
       VALUE "ProductName", "WinClock"
-      VALUE "ProductVersion", "2.2.2"
+      VALUE "ProductVersion", "2.3.0"
       VALUE "OriginalFilename", "WinClock.exe"
     END
   END

@@ -54,7 +54,7 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 - Next meeting from your calendar (.ics link) with a join reminder (off by default)
 - Work / Personal profiles that can switch by time of day
 - Share your setup with a short code
-- Optional weekly update check (off by default)
+- Checks for updates when it starts and updates itself in one click (turn off in Settings)
 - Follows Windows high contrast and text size
 - Very light: one small app, a few MB of memory, near-zero CPU
 
