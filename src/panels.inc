@@ -218,6 +218,7 @@ static const Weather* WeatherFor(const Clock& c) {
     if (NowMin() - it->second.at > 180) return nullptr;   // stale
     return &it->second;
 }
+static bool WeatherShown() { if (!S.weather) return false; for (auto& c : g_clocks) if (WeatherFor(c)) return true; return false; }
 static int WxKind(int code) {   // 0 clear, 1 partly, 2 cloudy, 3 fog, 4 rain, 5 snow, 6 storm
     if (code == 0) return 0; if (code <= 2) return 1; if (code == 3) return 2; if (code == 45 || code == 48) return 3;
     if ((code >= 71 && code <= 77) || code == 85 || code == 86) return 5; if (code >= 95) return 6; return 4;
@@ -371,6 +372,10 @@ static void DrawPanels(Ctx& c, float y) {   // y = top of the area, scaled
           G::SolidBrush sb2{ G::Color(th.accent) }; g.FillEllipse(&sb2, sx - 3.5f * s, sy - 3.5f * s, 7 * s, 7 * s); }
         // your clocks (labels dodge each other: right, left, below, above)
         std::vector<G::RectF> used;
+        for (auto& ck : g_clocks) if (!std::isnan(ck.lat)) {   // every dot is taken space for the labels
+            float px = x0 + (float)((ck.lon + 180) / 360 * mw), py = y + (float)((76 - ck.lat) / 132 * mh);
+            used.push_back(G::RectF(px - 4 * s, py - 4 * s, 8 * s, 8 * s));
+        }
         for (size_t i = 0; i < g_clocks.size(); i++) {
             const Clock& ck = g_clocks[i]; if (std::isnan(ck.lat)) continue;
             float px = x0 + (float)((ck.lon + 180) / 360 * mw), py = y + (float)((76 - ck.lat) / 132 * mh);

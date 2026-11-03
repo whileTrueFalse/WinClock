@@ -1126,6 +1126,19 @@ static bool LayoutHasSeconds(int layout) { return S.secs && !g_shift && (layout 
 static const float kM = 10, kTitle = 16, kTop = 38, kStatusH = 24, kBot = 12 + 10 + 24 + 10, kSide = 24;
 struct Col { const wchar_t* name; float w; };
 static const Col kCols[] = { { L"ID", 42 }, { L"CITY / PERSON", 170 }, { L"TIME", 138 }, { L"STATE", 86 }, { L"OFFSET", 104 }, { L"DAY", 88 } };
+static bool WeatherShown();   // panels.inc
+// the city column grows to fit the longest name (plus the weather, when it's on), so names aren't cut off
+static float ColW(int k) {
+    if (k != 1) return kCols[k].w;
+    float longest = 0;
+    HDC sdc = GetDC(nullptr);
+    { G::Graphics mg(sdc); float keep = g_optScale; g_optScale = 1;
+      for (size_t i = 0; i < g_clocks.size(); i++) longest = std::max(longest, TW(mg, DisplayName((int)i), F(FS, 14.5f)));
+      g_optScale = keep; }
+    ReleaseDC(nullptr, sdc);
+    float w = 10 + 12 + longest + 14 + (WeatherShown() ? 52.f : 0.f);
+    return std::clamp(w, kCols[1].w, 340.f);
+}
 static const wchar_t* kLayoutTitle[] = { L"world clocks", L"analog", L"timeline", L"world clocks", L"" };
 
 static void ContentSize(int layout, int n, float& cw, float& ch) {
@@ -1135,7 +1148,7 @@ static void ContentSize(int layout, int n, float& cw, float& ch) {
     case L_TIMELINE: cw = 640; ch = 28 + n * 42.f; break;
     case L_COMPACT: cw = 320; ch = n * 31.f; break;
     case L_STRIP: cw = 0; ch = 0; break;
-    default: cw = 0; for (auto& c : kCols) cw += c.w; ch = 28 + n * 38.f; break;
+    default: cw = 0; for (int k = 0; k < 6; k++) cw += ColW(k); ch = 28 + n * 38.f; break;
     }
 }
 static float PinsH() { int np = std::min((int)g_pins.size(), 4); return np ? 10.f + 26.f * np : 0.f; }
@@ -1192,10 +1205,11 @@ static void DotFill(Ctx& c, float x, float y, float w, float h, int alpha) {
 // ---- table (list) layout
 static void DrawList(Ctx& c, float top) {
     float s = c.s, x0 = c.x0, x1 = c.x1, hh = 28 * s, rh = 38 * s;
-    float base = 0; for (auto& k : kCols) base += k.w * s;
+    float colw[6]; for (int k = 0; k < 6; k++) colw[k] = ColW(k);
+    float base = 0; for (int k = 0; k < 6; k++) base += colw[k] * s;
     float extra = std::max(0.f, (x1 - x0) - base);
     float cx[7]; float x = x0;
-    for (int k = 0; k < 6; k++) { cx[k] = x; x += kCols[k].w * s + (k == 1 ? extra : 0); }
+    for (int k = 0; k < 6; k++) { cx[k] = x; x += colw[k] * s + (k == 1 ? extra : 0); }
     cx[6] = x1;
     { G::SolidBrush hb{ G::Color(c.th.blue) }; c.g.FillRectangle(&hb, x0, top, x1 - x0, hh); }
     FontE* fh = F(FMS, 11.5f * s);
