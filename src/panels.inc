@@ -474,6 +474,7 @@ static void PaintStrip(View& v, float s, int theme, Frame& fr) {
     }
     v.W = w; v.H = h;
     Present(v.hwnd, v.surf, v.fly ? v.animAlpha : (BYTE)(S.opacity * 255 / 100), nullptr);
+    if (!v.fly) KeepOnScreen(v.hwnd);
     long long secs = (long long)(fr.utc / 10000000ULL);
     v.key = TimerActive() ? secs : secs / 60;
 }

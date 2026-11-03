@@ -1076,6 +1076,16 @@ static void Present(HWND hwnd, Surface& s, BYTE alpha, POINT* pos) {
     SIZE sz{ s.w, s.h }; POINT src{ 0, 0 }; BLENDFUNCTION bf{ AC_SRC_OVER, 0, alpha, AC_SRC_ALPHA };
     UpdateLayeredWindow(hwnd, nullptr, pos, &sz, s.dc, &src, 0, &bf, ULW_ALPHA);
 }
+// when the widget grows (map, markets, cards), slide it back inside the screen instead of running off the edge
+static void KeepOnScreen(HWND h) {
+    if (!h || !IsWindowVisible(h)) return;
+    RECT r; GetWindowRect(h, &r);
+    MONITORINFO mi{ sizeof(mi) }; GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mi);
+    RECT wa = mi.rcWork; int x = r.left, y = r.top, w = r.right - r.left, hh = r.bottom - r.top;
+    if (x + w > wa.right) x = wa.right - w; if (y + hh > wa.bottom) y = wa.bottom - hh;
+    if (x < wa.left) x = wa.left; if (y < wa.top) y = wa.top;
+    if (x != r.left || y != r.top) SetWindowPos(h, nullptr, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
 static void SetupGraphics(G::Graphics& g) {
     g.SetSmoothingMode(G::SmoothingModeAntiAlias);
     g.SetTextRenderingHint(G::TextRenderingHintAntiAliasGridFit);
@@ -1485,6 +1495,7 @@ static void PaintView(View& v) {
     }
     v.W = w; v.H = h;
     Present(v.hwnd, v.surf, v.fly ? v.animAlpha : (BYTE)(S.opacity * 255 / 100), nullptr);
+    if (!v.fly) KeepOnScreen(v.hwnd);
     long long secs = (long long)(fr.utc / 10000000ULL);
     v.key = (LayoutHasSeconds(layout) || TimerActive()) ? secs : secs / 60;
 }
