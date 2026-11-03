@@ -1425,7 +1425,12 @@ static bool TaskbarIsLight() {
 static bool ForegroundIsFullscreen(HWND tray) {
     QUERY_USER_NOTIFICATION_STATE q;
     if (SUCCEEDED(SHQueryUserNotificationState(&q)) && (q == QUNS_RUNNING_D3D_FULL_SCREEN || q == QUNS_PRESENTATION_MODE)) return true;
+    // When a real full-screen app is in front, Windows drops the taskbar out of the topmost band.
+    // While the taskbar is still topmost, nothing is covering it, whatever size the front window is.
+    if (tray && (GetWindowLongW(tray, GWL_EXSTYLE) & WS_EX_TOPMOST)) return false;
     HWND fg = GetForegroundWindow(); if (!fg || fg == tray) return false;
+    LONG ex = GetWindowLongW(fg, GWL_EXSTYLE);
+    if (ex & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE)) return false;   // click-through overlays (GPU/monitor tools)
     wchar_t cls[64] = L""; GetClassNameW(fg, cls, 64);
     if (!wcscmp(cls, L"WorkerW") || !wcscmp(cls, L"Progman") || !wcscmp(cls, L"Shell_TrayWnd")) return false;
     DWORD pid = 0; GetWindowThreadProcessId(fg, &pid); if (pid == GetCurrentProcessId()) return false;
