@@ -1781,6 +1781,30 @@ static void AlarmTick() {
 }
 
 // ---------------------------------------------------------------- widget placement / style
+// "Pin to desktop": sit just above the desktop-icons layer, not at the very bottom. With live wallpapers
+// (Wallpaper Engine and similar) the icons layer is a full-screen window of its own; below it the widget
+// would still show but every click would land on the desktop instead.
+static HWND DesktopIconsHost() {
+    HWND found = nullptr;
+    EnumWindows([](HWND w, LPARAM lp) -> BOOL {
+        if (FindWindowExW(w, nullptr, L"SHELLDLL_DefView", nullptr)) { *(HWND*)lp = w; return FALSE; }
+        return TRUE;
+    }, (LPARAM)&found);
+    return found;
+}
+static HWND DesktopInsertAfter(HWND self) {
+    HWND host = DesktopIconsHost();
+    if (!host) return HWND_BOTTOM;
+    HWND prev = GetWindow(host, GW_HWNDPREV);
+    while (prev == self) prev = GetWindow(prev, GW_HWNDPREV);
+    return prev ? prev : HWND_TOP;
+}
+static void PinToDesktop(HWND w) {
+    if (!w) return;
+    HWND host = DesktopIconsHost();
+    if (host && GetWindow(host, GW_HWNDPREV) == w) return;   // already right above the icons
+    SetWindowPos(w, DesktopInsertAfter(w), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
 static void ApplyWidgetStyle() {
     HWND w = g_widget.hwnd; if (!w) return;
     LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
@@ -1790,7 +1814,7 @@ static void ApplyWidgetStyle() {
     if (S.zmode == Z_TOP) SetWindowPos(w, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     else {
         SetWindowPos(w, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        SetWindowPos(w, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        PinToDesktop(w);
     }
 }
 static void PlaceWidget() {
@@ -2796,7 +2820,10 @@ static LRESULT CALLBACK ViewProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     case WM_WINDOWPOSCHANGING:
         if (!v.fly && S.zmode == Z_DESKTOP && !g_deskRaised) {
             WINDOWPOS* p = (WINDOWPOS*)lp;
-            if (!(p->flags & SWP_NOZORDER)) p->hwndInsertAfter = HWND_BOTTOM;
+            if (!(p->flags & SWP_NOZORDER) && p->hwndInsertAfter != HWND_NOTOPMOST) {
+                HWND after = DesktopInsertAfter(h);
+                if (after != p->hwndInsertAfter && after != HWND_TOP) p->hwndInsertAfter = after;
+            }
         }
         break;
     case WM_ACTIVATE:
@@ -2895,7 +2922,7 @@ static void CALLBACK WinEventProc(HWINEVENTHOOK, DWORD ev, HWND hwnd, LONG, LONG
         } else if (!desk && g_deskRaised) {
             SetWindowPos(g_widget.hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             g_deskRaised = false;
-            SetWindowPos(g_widget.hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            PinToDesktop(g_widget.hwnd);
         }
     }
     if (S.tbShow && !g_paused) { UpdateBar(false); BarRaise(); }
