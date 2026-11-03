@@ -214,7 +214,12 @@ static bool ParseWhenT(const std::wstring& t, const WhenZone* forced, WhenResult
     else if (!LocalToUtcMin(z.clock, lt, r.utc)) { if (err) *err = L"couldn't convert that time"; return false; }
     return true;
 }
-static bool ParseWhen(std::wstring text, WhenResult& r, std::wstring* err = nullptr) { return ParseWhenT(CleanWhenText(text), nullptr, r, err); }
+struct CalcAnswer; static bool TimeCalc(const std::wstring& text, CalcAnswer& a);
+static bool ParseWhenCalc(const std::wstring& text, WhenResult& r);   // defined with the calculator
+static bool ParseWhen(std::wstring text, WhenResult& r, std::wstring* err = nullptr) {
+    if (ParseWhenCalc(text, r)) return true;   // "9pm in india, what time in germany": India is the source
+    return ParseWhenT(CleanWhenText(text), nullptr, r, err);
+}
 
 // "3:00 PM New York (Thu) = 12:30 AM Mumbai (Fri) = ..."
 static std::wstring ConversionLine(const WhenResult& w) {
@@ -486,4 +491,9 @@ static bool TimeCalc(const std::wstring& text, CalcAnswer& a) {
     }
     a.copy = all;
     return true;
+}
+static bool ParseWhenCalc(const std::wstring& text, WhenResult& r) {
+    CalcAnswer a;
+    if (!TimeCalc(text, a) || !a.when.hasTime) return false;
+    r = a.when; return true;
 }

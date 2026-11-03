@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------- command palette (Ctrl+Alt+K by default)
 // Type "tokyo", "add berlin", "3pm ny thu", "meeting", "theme paper"... Enter runs the highlighted line.
-struct PalItem { std::wstring title, sub; std::function<void()> run; bool keepOpen = false; };
+struct PalItem { std::wstring title, sub; std::function<void()> run; bool keepOpen = false; bool copied = false; };
 static HWND g_pal = nullptr, g_palEdit = nullptr;
 static std::vector<PalItem> g_palItems; static int g_palSel = 0;
 static HFONT g_palFont = nullptr; static HBRUSH g_palBrush = nullptr;
@@ -100,8 +100,9 @@ static void PalBuild(const std::wstring& raw) {
     CalcAnswer ca;
     bool calc = TimeCalc(q, ca);
     if (calc) {
-        for (auto& r : ca.rows) { std::wstring c1 = r.copy; if (g_palItems.size() < 7) add(r.title, r.sub + L"  ·  Enter copies", [c1]() { CopyText(c1); }); }
-        if (ca.rows.size() > 1) { std::wstring copy = ca.copy; add(L"Copy all of these", L"one line per place", [copy]() { CopyText(copy); }); }
+        // Enter copies and keeps the answer on screen (with a tick) so it's clear it worked
+        for (auto& r : ca.rows) { std::wstring c1 = r.copy; if (g_palItems.size() < 7) add(r.title, r.sub + L"  ·  Enter copies", [c1]() { CopyText(c1); }, true); }
+        if (ca.rows.size() > 1) { std::wstring copy = ca.copy; add(L"Copy all of these", L"one line per place", [copy]() { CopyText(copy); }, true); }
         WhenResult cw = ca.when;
         add(L"Show this moment on all my clocks", L"moves the widget to that time; middle-click it to come back", [cw]() { ConvertTo(cw); });
     }
@@ -136,7 +137,14 @@ static void PalRun(int i) {
     if (i < 0 || i >= (int)g_palItems.size()) return;
     PalItem it = g_palItems[i];
     if (!it.run) return;
-    if (it.keepOpen) { it.run(); return; }
+    if (it.keepOpen) {
+        it.run();
+        if (i < (int)g_palItems.size() && g_palItems[i].sub.find(L"Enter copies") != std::wstring::npos) {
+            std::wstring& sub = g_palItems[i].sub; sub.replace(sub.find(L"Enter copies"), 12, L"\u2713 copied to clipboard");
+            g_palItems[i].copied = true; InvalidateRect(g_pal, nullptr, FALSE);
+        }
+        return;
+    }
     PalClose(); it.run();
 }
 static WNDPROC g_palEditOld = nullptr;
@@ -188,7 +196,7 @@ static LRESULT CALLBACK PalProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 if ((int)i == g_palSel) { G::SolidBrush hb{ G::Color(th.hover) }; g.FillRectangle(&hb, 6 * s, y, W - 12 * s, 38 * s);
                                           G::SolidBrush ab{ G::Color(th.accent) }; g.FillRectangle(&ab, 6 * s, y + 6 * s, 3 * s, 26 * s); }
                 DT(g, g_palItems[i].title, F(FS, 14 * s), 22 * s, y + 18 * s, th.fg, AL, W - 44 * s);
-                DT(g, g_palItems[i].sub, F(FR, 11.5f * s), 22 * s, y + 33 * s, th.dim, AL, W - 44 * s);
+                DT(g, g_palItems[i].sub, F(FR, 11.5f * s), 22 * s, y + 33 * s, g_palItems[i].copied ? th.accent : th.dim, AL, W - 44 * s);
             }
         }
         BitBlt(dc, 0, 0, W, H, sf.dc, 0, 0, SRCCOPY);
@@ -253,6 +261,12 @@ static void ConvertClipboard() {
         std::wstring snip = text.substr(0, 60); for (auto& c : snip) if (c == L'\r' || c == L'\n') c = L' ';
         Balloon(L"No time found in the clipboard", L"“" + snip + (text.size() > 60 ? L"…" : L"") + L"”\n" + err);
         return;
+    }
+    CalcAnswer ca;
+    if (TimeCalc(text, ca) && !ca.rows.empty()) {
+        std::wstring body;
+        for (size_t i = 0; i < ca.rows.size() && i < 4; i++) body += (i ? L"\n" : L"") + ca.rows[i].title;
+        Balloon(ca.rows[0].sub.substr(0, ca.rows[0].sub.find(L"  ·  ")), body);
     }
     ConvertTo(w);
 }

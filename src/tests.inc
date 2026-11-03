@@ -91,6 +91,8 @@ static void RunTests() {
         ok = calc(L"9pm, what time would it be in japan", a);
         Expect(ok && a.rows.size() == 1 && first(a).find(L"Japan") != std::wstring::npos, L"calc: 9pm (your time) -> Japan: " + first(a));
         Expect(!calc(L"3pm tokyo", a), L"calc: a single place stays a normal conversion");
+        { WhenResult w; bool ok2 = ParseWhen(L"9:00 pm in india, what time it would be in germany", w);
+          Expect(ok2 && w.zone.name.find(L"India") != std::wstring::npos, L"clipboard converter reads India as the source: " + w.zone.name); }
         ok = calc(L"9 pm IST to CET nov 10 2026", a);
         Expect(ok && first(a).find(L"4:30 PM") == 0, L"calc: 9pm IST -> CET = 4:30 PM: " + first(a));
     }
