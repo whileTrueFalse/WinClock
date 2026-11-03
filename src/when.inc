@@ -143,6 +143,7 @@ static std::wstring CleanWhenText(const std::wstring& text) {
     auto replaceAll = [&](const std::wstring& a, const std::wstring& b) { for (size_t p = t.find(a); p != std::wstring::npos; p = t.find(a, p + b.size())) t.replace(p, a.size(), b); };
     replaceAll(L"a.m.", L"am"); replaceAll(L"p.m.", L"pm"); replaceAll(L"o'clock", L""); replaceAll(L"o’clock", L"");
     replaceAll(L"u.s.a.", L"usa"); replaceAll(L"u.s.", L"usa"); replaceAll(L"u.k.", L"uk");
+    replaceAll(L"am-", L"am \u2013 "); replaceAll(L"pm-", L"pm \u2013 "); replaceAll(L"\u2013", L" \u2013 "); replaceAll(L"\u2014", L" \u2013 ");
     return t;
 }
 // t must already be cleaned. With `forced`, that zone is the source and the text's zone words must already be blanked out.
@@ -496,4 +497,259 @@ static bool ParseWhenCalc(const std::wstring& text, WhenResult& r) {
     CalcAnswer a;
     if (!TimeCalc(text, a) || !a.when.hasTime) return false;
     r = a.when; return true;
+}
+
+// ---------------------------------------------------------------- calculator: durations, "until", "between", ranges
+// "9pm IST + 3h 45m" · "now + 90 min" · "how long until 6pm London" · "hours between 9am NY and 5pm Tokyo"
+// "9am-5pm India in Germany" (a window, with the overlap with Germany's working hours)
+static bool UnitAt(const std::wstring& t, size_t& j, int& perMin) {
+    static const std::pair<const wchar_t*, int> units[] = {
+        { L"hours", 60 }, { L"hour", 60 }, { L"hrs", 60 }, { L"hr", 60 }, { L"h", 60 },
+        { L"minutes", 1 }, { L"minute", 1 }, { L"mins", 1 }, { L"min", 1 }, { L"m", 1 },
+        { L"days", 1440 }, { L"day", 1440 }, { L"d", 1440 } };
+    size_t k = j; while (k < t.size() && t[k] == L' ') k++;
+    for (auto& u : units) {
+        size_t n = wcslen(u.first);
+        if (t.compare(k, n, u.first) == 0 && (k + n >= t.size() || !iswalpha(t[k + n]))) { j = k + n; perMin = u.second; return true; }
+    }
+    return false;
+}
+// parses "3h 45m", "3h45", "90 min", "1.5 hours", "1:30" (after + / -) starting at i; returns minutes and the end
+static bool DurationAt(const std::wstring& t, size_t i, bool colonOk, int& mins, size_t& end) {
+    size_t j = i; while (j < t.size() && t[j] == L' ') j++;
+    if (colonOk && j + 3 < t.size() + 1 && iswdigit(t[j])) {   // "1:30"
+        size_t k = j; int h = 0; while (k < t.size() && iswdigit(t[k]) && k - j < 3) h = h * 10 + (t[k++] - L'0');
+        if (k + 2 < t.size() + 1 && k < t.size() && t[k] == L':' && k + 2 < t.size() + 1 && iswdigit(t[k + 1]) && iswdigit(t[k + 2]) && (k + 3 >= t.size() || !iswalnum(t[k + 3]))) {
+            mins = h * 60 + (t[k + 1] - L'0') * 10 + (t[k + 2] - L'0'); end = k + 3; return mins > 0;
+        }
+    }
+    double total = 0; int parts = 0;
+    for (;;) {
+        size_t k = j; while (k < t.size() && t[k] == L' ') k++;
+        if (k >= t.size() || !iswdigit(t[k])) break;
+        size_t q = k; double v = 0; while (q < t.size() && iswdigit(t[q])) v = v * 10 + (t[q++] - L'0');
+        if (q + 1 < t.size() && t[q] == L'.' && iswdigit(t[q + 1])) { double f = 0.1; q++; while (q < t.size() && iswdigit(t[q])) { v += (t[q++] - L'0') * f; f /= 10; } }
+        int per = 0; size_t u = q;
+        if (!UnitAt(t, u, per)) {
+            if (parts == 1 && per == 0) {   // "3h45": minutes without a unit after an hour part
+                if (q - k <= 2 && v < 60 && (q >= t.size() || !iswalpha(t[q]))) { total += v; j = q; parts++; }
+            }
+            break;
+        }
+        // "5pm" is a time, not 5 minutes: units must not be followed by more letters (handled in UnitAt), and "m" right after
+        // digits followed by nothing else is fine. Reject "am"/"pm" (UnitAt never matches those).
+        total += v * per; j = u; parts++;
+        if (parts >= 3) break;
+    }
+    if (!parts || total <= 0 || total > 60 * 24 * 60) return false;
+    mins = (int)llround(total); end = j; return true;
+}
+// finds a duration term, blanks it in t and returns signed minutes
+static bool TakeDuration(std::wstring& t, int& signedMins) {
+    auto blank = [&](size_t a, size_t b) { for (size_t i = a; i < b && i < t.size(); i++) t[i] = L' '; };
+    // "+ 3h", "- 90 min", "plus 2 hours", "minus 30m", "add 2h"
+    for (size_t i = 0; i < t.size(); i++) {
+        int sign = 0; size_t after = i;
+        if (t[i] == L'+') { sign = 1; after = i + 1; }
+        else if (t[i] == L'-' && (i == 0 || t[i - 1] == L' ') && i + 1 < t.size() && (t[i + 1] == L' ' || iswdigit(t[i + 1]))) { sign = -1; after = i + 1; }
+        else {
+            for (auto w : { std::make_pair(L"plus", 1), std::make_pair(L"add", 1), std::make_pair(L"minus", -1), std::make_pair(L"subtract", -1) }) {
+                size_t n = wcslen(w.first);
+                if (t.compare(i, n, w.first) == 0 && WordAt(t, i, n)) { sign = w.second; after = i + n; break; }
+            }
+        }
+        if (!sign) continue;
+        int m; size_t e;
+        if (DurationAt(t, after, true, m, e)) { signedMins = sign * m; blank(i, e); return true; }
+    }
+    // "3 hours later / after / from now", "2h before / earlier / ago", "in 3 hours"
+    for (size_t i = 0; i < t.size(); i++) {
+        if (!iswdigit(t[i]) || (i > 0 && (iswalnum(t[i - 1]) || t[i - 1] == L':'))) continue;
+        int m; size_t e;
+        if (!DurationAt(t, i, false, m, e)) continue;
+        size_t k = e; while (k < t.size() && t[k] == L' ') k++;
+        auto word = [&](const wchar_t* w) { size_t n = wcslen(w); return t.compare(k, n, w) == 0 && WordAt(t, k, n) ? n : 0; };
+        size_t n;
+        if ((n = word(L"later")) || (n = word(L"after")) || (n = word(L"from now")) || (n = word(L"from"))) { signedMins = m; blank(i, k + n); return true; }
+        if ((n = word(L"before")) || (n = word(L"earlier")) || (n = word(L"ago"))) { signedMins = -m; blank(i, k + n); return true; }
+        // "in 3 hours" (only when "in" sits right before and no clock time follows)
+        size_t b = i; while (b > 0 && t[b - 1] == L' ') b--;
+        if (b >= 2 && t.compare(b - 2, 2, L"in") == 0 && (b == 2 || t[b - 3] == L' ')) { signedMins = m; blank(b - 2, e); return true; }
+    }
+    return false;
+}
+struct TimeSpot { size_t at, len; int hh, mm; };
+static std::vector<TimeSpot> FindTimes(std::wstring t, int maxN = 3) {
+    std::vector<TimeSpot> out;
+    for (int k = 0; k < maxN; k++) {
+        int hh, mm; size_t at, len;
+        if (!ParseClockTime(t, hh, mm, at, len)) break;
+        out.push_back({ at, len, hh, mm });
+        for (size_t i = at; i < at + len; i++) t[i] = L' ';
+        if (FindWord(t, L"noon") == std::wstring::npos && FindWord(t, L"midnight") == std::wstring::npos) {}
+    }
+    std::sort(out.begin(), out.end(), [](const TimeSpot& a, const TimeSpot& b) { return a.at < b.at; });
+    return out;
+}
+// the moment for one time spot, read in zone z, with any date words in the text
+static bool MomentFor(const std::wstring& blanked, const TimeSpot& ts, const std::vector<TimeSpot>& all, const WhenZone& z, long long& utc) {
+    std::wstring only = blanked;
+    for (auto& o : all) if (o.at != ts.at) for (size_t i = o.at; i < o.at + o.len; i++) only[i] = L' ';
+    WhenResult r;
+    if (!ParseWhenT(only, &z, r, nullptr)) return false;
+    utc = r.utc; return true;
+}
+static std::wstring DurWords(long long m) {
+    bool neg = m < 0; if (neg) m = -m;
+    std::wstring s;
+    if (m >= 1440) s = Fmt(L"%lld d ", m / 1440);
+    long long r = m % 1440;
+    if (r >= 60 || m < 60) s += Fmt(L"%lld h", r / 60);
+    if (r % 60) s += Fmt(L"%ls%lld min", (r >= 60) ? L" " : L"", r % 60);
+    if (r == 0 && m >= 1440) s.pop_back();
+    if (m < 60) s = Fmt(L"%lld min", m);
+    return (neg ? L"−" : L"") + s;
+}
+static std::wstring WhenIn(const WhenZone& z, long long u, const std::wstring& name, long long refDay = LLONG_MIN) {
+    SYSTEMTIME st = ZoneTime(z, u);
+    std::wstring d = kDays[st.wDayOfWeek];
+    if (refDay != LLONG_MIN) { long long dd = DaysOf(st.wYear, st.wMonth, st.wDay) - refDay; if (dd > 0) d += L", next day"; else if (dd < 0) d += L", day before"; }
+    return FmtHMFull(st) + L" " + d + L" · " + name;
+}
+static long long DayOfZone(const WhenZone& z, long long u) { SYSTEMTIME st = ZoneTime(z, u); return DaysOf(st.wYear, st.wMonth, st.wDay); }
+// working-hours window of a zone (clock's own hours when it is one of yours), intersected with [a, b)
+static long long WorkOverlap(const WhenZone& z, long long a, long long b, long long& o1, long long& o2) {
+    int ws = S.workStart, we = S.workEnd; int offMask = 0x41;
+    for (auto& c : g_clocks) if (c.tzid == z.clock.tzid && c.label == z.clock.label) { ws = WorkStartOf(c); we = WorkEndOf(c); offMask = c.offMask; }
+    long long best = 0; o1 = o2 = -1;
+    for (long long d = DayOfZone(z, a) - 1; d <= DayOfZone(z, b) + 1; d++) {
+        SYSTEMTIME day = DateOf(d);
+        if (offMask & (1 << WeekdayOf(d))) continue;
+        SYSTEMTIME s1 = day; s1.wHour = (WORD)ws; SYSTEMTIME s2 = day; s2.wHour = (WORD)(we % 24);
+        long long w1, w2;
+        if (z.fixedOff != INT_MIN) { w1 = d * 1440 + ws * 60 - z.fixedOff; w2 = d * 1440 + we * 60 - z.fixedOff; }
+        else { if (!LocalToUtcMin(z.clock, s1, w1) || !LocalToUtcMin(z.clock, s2, w2)) continue; if (we >= 24 || w2 <= w1) w2 += 1440; }
+        long long x1 = std::max(a, w1), x2 = std::min(b, w2);
+        if (x2 - x1 > best) { best = x2 - x1; o1 = x1; o2 = x2; }
+    }
+    return best;
+}
+static void AddPlainRow(CalcAnswer& a, const std::wstring& title, const std::wstring& sub) { CalcRow r; r.title = title; r.sub = sub; r.copy = title + L" (" + sub + L")"; a.rows.push_back(r); a.copy += (a.copy.empty() ? L"" : L"\r\n") + r.copy; }
+
+static bool CalcQuery(const std::wstring& text, CalcAnswer& a) {
+    a = CalcAnswer{};
+    std::wstring t = CleanWhenText(text);
+    int durMins = 0; bool hasDur = TakeDuration(t, durMins);
+    std::vector<PlaceHit> hits = FindAllPlaces(t);
+    std::wstring blanked = t;
+    for (auto& h : hits) for (size_t i = h.at; i < h.at + h.len && i < blanked.size(); i++) blanked[i] = L' ';
+    std::vector<TimeSpot> times = FindTimes(blanked);
+    bool wantUntil = FindWord(t, L"until") != std::wstring::npos || FindWord(t, L"till") != std::wstring::npos || FindWord(t, L"untill") != std::wstring::npos ||
+                     t.find(L"how long") != std::wstring::npos || t.find(L"time left") != std::wstring::npos || t.find(L"how much time") != std::wstring::npos;
+    bool wantBetween = FindWord(t, L"between") != std::wstring::npos || t.find(L"how many hours") != std::wstring::npos || t.find(L"hours from") != std::wstring::npos ||
+                       FindWord(t, L"duration") != std::wstring::npos || FindWord(t, L"difference") != std::wstring::npos || (wantUntil && times.size() == 2);
+    long long now = NowMin();
+    auto localZone = []() { WhenZone z; z.clock = g_localClock; z.name = L"your time"; return z; };
+    auto nearest = [&](const TimeSpot& ts, int exclude) {
+        int best = -1; long bestGap = LONG_MAX;
+        for (int i = 0; i < (int)hits.size(); i++) {
+            if (i == exclude) continue;
+            long gap = hits[i].at >= ts.at + ts.len ? (long)(hits[i].at - ts.at - ts.len) : (long)ts.at - (long)(hits[i].at + hits[i].len);
+            if (gap < 0) gap = 0;
+            std::wstring between = hits[i].at >= ts.at + ts.len ? t.substr(ts.at + ts.len, hits[i].at - ts.at - ts.len) : L"";
+            for (const wchar_t* w : { L"to", L"into", L"what", L"convert", L"for", L"would", L"will", L"in my" }) if (FindWord(between, w) != std::wstring::npos) gap += 10000;
+            if (gap < bestGap) { bestGap = gap; best = i; }
+        }
+        return best;
+    };
+
+    // 1) between two times: a duration
+    if (times.size() == 2 && wantBetween) {
+        int p1 = -1, p2 = -1;
+        if (hits.size() == 2) { p1 = hits[0].at < hits[1].at ? 0 : 1; p2 = 1 - p1; if (!(hits[p1].at < times[1].at)) { p1 = nearest(times[0], -1); p2 = nearest(times[1], p1); } }
+        else if (hits.size() == 1) { p1 = nearest(times[0], -1); p2 = p1; }
+        WhenZone z1 = p1 >= 0 ? hits[p1].zones[0] : localZone(), z2 = p2 >= 0 ? hits[p2].zones[0] : localZone();
+        std::wstring n1 = p1 >= 0 ? hits[p1].place : L"your time", n2 = p2 >= 0 ? hits[p2].place : L"your time";
+        long long u1, u2;
+        if (!MomentFor(blanked, times[0], times, z1, u1) || !MomentFor(blanked, times[1], times, z2, u2)) return false;
+        bool dated = false; { WhenResult r; std::wstring only = blanked; for (auto& o : times) for (size_t i = o.at; i < o.at + o.len; i++) only[i] = L' ';
+                              ParseWhenT(only, &z1, r, nullptr, true); dated = r.hasDate; }
+        if (!dated) while (u2 < u1) u2 += 1440;
+        a.when.utc = u1; a.when.zone = z1; a.when.hasTime = a.when.hasZone = true;
+        AddPlainRow(a, DurWords(u2 - u1), L"from " + WhenIn(z1, u1, n1) + L" to " + WhenIn(z2, u2, n2, DayOfZone(z1, u1)));
+        return true;
+    }
+    // 2) how long until a time
+    if (times.size() == 1 && wantUntil && !hasDur) {
+        int p = hits.empty() ? -1 : nearest(times[0], -1);
+        WhenZone z = p >= 0 ? hits[p].zones[0] : localZone(); std::wstring nm = p >= 0 ? hits[p].place : L"your time";
+        long long u; if (!MomentFor(blanked, times[0], times, z, u)) return false;
+        WhenResult r0; { std::wstring only = blanked; ParseWhenT(only, &z, r0, nullptr); }
+        if (!r0.hasDate) while (u <= now) u += 1440;
+        a.when.utc = u; a.when.zone = z; a.when.hasTime = a.when.hasZone = true;
+        std::wstring sub = WhenIn(z, u, nm, DayOfZone(z, now));
+        if (p >= 0) { WhenZone lz = localZone(); sub += L"  =  " + WhenIn(lz, u, L"your time", DayOfZone(lz, now)); }
+        AddPlainRow(a, DurWords(u - now) + L" to go", L"until " + sub);
+        for (int i = 0; i < (int)hits.size(); i++) if (i != p) for (auto& z2 : hits[i].zones) AddPlainRow(a, WhenIn(z2, u, hits[i].zones.size() > 1 ? hits[i].place + L" · " + z2.name : hits[i].place), L"the same moment");
+        return true;
+    }
+    // 3) a window: "9am-5pm India in Germany"
+    if (times.size() == 2 && !hasDur) {
+        std::wstring mid = blanked.substr(times[0].at + times[0].len, times[1].at - times[0].at - times[0].len);
+        std::wstring m2 = mid; m2.erase(std::remove(m2.begin(), m2.end(), L' '), m2.end());
+        bool joined = m2 == L"–" || m2 == L"-" || m2 == L"to" || m2 == L"till" || m2 == L"until" || m2 == L"and";
+        if (joined) {
+            TimeSpot span{ times[0].at, times[1].at + times[1].len - times[0].at, 0, 0 };
+            int p = hits.empty() ? -1 : nearest(span, -1);
+            WhenZone z = p >= 0 ? hits[p].zones[0] : localZone(); std::wstring nm = p >= 0 ? hits[p].place : L"your time";
+            long long u1, u2;
+            if (!MomentFor(blanked, times[0], times, z, u1) || !MomentFor(blanked, times[1], times, z, u2)) return false;
+            if (u2 <= u1) u2 += 1440;
+            a.when.utc = u1; a.when.zone = z; a.when.hasTime = a.when.hasZone = true;
+            std::vector<std::pair<std::wstring, WhenZone>> tg;
+            for (int i = 0; i < (int)hits.size(); i++) if (i != p) for (auto& z2 : hits[i].zones) tg.push_back({ hits[i].zones.size() > 1 ? hits[i].place + L" · " + z2.name : hits[i].place, z2 });
+            if (tg.empty()) for (size_t i = 0; i < g_clocks.size(); i++) { WhenZone z2; z2.clock = g_clocks[i]; z2.name = DisplayName((int)i); if (g_clocks[i].kind != 1) tg.push_back({ z2.name, z2 }); }
+            long long d0 = DayOfZone(z, u1);
+            std::wstring srcTxt = FmtHMFull(ZoneTime(z, u1)) + L"–" + FmtHMFull(ZoneTime(z, u2)) + L" " + kDays[ZoneTime(z, u1).wDayOfWeek] + L" in " + nm;
+            for (auto& x : tg) {
+                SYSTEMTIME s1 = ZoneTime(x.second, u1), s2 = ZoneTime(x.second, u2);
+                long long dd = DaysOf(s1.wYear, s1.wMonth, s1.wDay) - d0;
+                std::wstring title = FmtHMFull(s1) + L" – " + FmtHMFull(s2) + L" " + kDays[s1.wDayOfWeek] + (dd > 0 ? L" (next day)" : dd < 0 ? L" (day before)" : L"") + L"  ·  " + x.first;
+                long long o1, o2; long long ov = WorkOverlap(x.second, u1, u2, o1, o2);
+                std::wstring sub = srcTxt + L"  ·  " + (ov > 0 ? L"overlaps their working hours " + FmtHMFull(ZoneTime(x.second, o1)) + L"–" + FmtHMFull(ZoneTime(x.second, o2)) + L" (" + DurWords(ov) + L")"
+                                                       : std::wstring(L"outside their working hours"));
+                CalcRow r; r.title = title; r.sub = sub; r.copy = title + L" (" + srcTxt + L")"; a.rows.push_back(r);
+                a.copy += (a.copy.empty() ? L"" : L"\r\n") + r.copy;
+                PlaceHit ph; ph.place = x.first; ph.zones = { x.second }; a.targets.push_back(ph);
+            }
+            return !a.rows.empty();
+        }
+    }
+    // 4) arithmetic: "9pm IST + 3h 45m", "now + 90 min", "in 3 hours"
+    if (hasDur) {
+        WhenZone z = localZone(); std::wstring nm = L"your time"; int p = -1;
+        long long base;
+        if (!times.empty()) {
+            p = hits.empty() ? -1 : nearest(times[0], -1);
+            if (p >= 0) { z = hits[p].zones[0]; nm = hits[p].place; }
+            if (!MomentFor(blanked, times[0], times, z, base)) return false;
+        } else {
+            base = now + g_shift;
+            // "now + 3h in tokyo": the first place is where you want the answer
+        }
+        long long u = base + durMins;
+        a.when.utc = u; a.when.zone = z; a.when.hasTime = a.when.hasZone = true;
+        std::wstring how = (times.empty() ? std::wstring(L"now") : FmtHMFull(ZoneTime(z, base)) + L" " + kDays[ZoneTime(z, base).wDayOfWeek]) +
+                           (durMins >= 0 ? L" + " : L" − ") + DurWords(std::abs(durMins));
+        long long d0 = DayOfZone(z, base);
+        if (times.empty() && !hits.empty()) {
+            for (auto& h : hits) for (auto& z2 : h.zones) AddPlainRow(a, WhenIn(z2, u, h.zones.size() > 1 ? h.place + L" · " + z2.name : h.place, DayOfZone(z2, base)), how + L" (" + h.place + L")");
+        } else {
+            AddPlainRow(a, WhenIn(z, u, nm, d0), how + (p >= 0 ? L" in " + nm : L""));
+            for (int i = 0; i < (int)hits.size(); i++) if (i != p) for (auto& z2 : hits[i].zones) AddPlainRow(a, WhenIn(z2, u, hits[i].zones.size() > 1 ? hits[i].place + L" · " + z2.name : hits[i].place, d0), L"the same moment");
+        }
+        return true;
+    }
+    // 5) plain conversion between places
+    return TimeCalc(text, a);
 }

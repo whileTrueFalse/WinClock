@@ -3,7 +3,7 @@
 // version number) and the calendar link (off until you add one).
 // Requests run on a short-lived background thread; results come back to the UI thread as WM_APP_NET.
 
-enum { NET_CAL = 1, NET_UPDATE = 2, NET_UPDATE_MANUAL = 3, NET_DOWNLOAD = 4 };
+enum { NET_CAL = 1, NET_UPDATE = 2, NET_UPDATE_MANUAL = 3, NET_DOWNLOAD = 4, NET_WEATHER = 5 };
 struct NetJob { int kind; std::wstring url; std::string body; DWORD status = 0; };
 static volatile LONG g_netBusy[8] = {};
 
@@ -49,6 +49,12 @@ static DWORD WINAPI NetThread(LPVOID p) {
     return 0;
 }
 static void NetStart(int kind, const std::wstring& url) {
+#ifdef STORE_BUILD
+    if (kind == NET_UPDATE || kind == NET_UPDATE_MANUAL || kind == NET_DOWNLOAD) {   // the Store handles updates
+        if (kind == NET_UPDATE_MANUAL) ShellExecuteW(nullptr, L"open", L"ms-windows-store://downloadsandupdates", nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+#endif
     if (InterlockedCompareExchange(&g_netBusy[kind], 1, 0) != 0) return;
     NetJob* j = new NetJob{ kind, url };
     HANDLE t = CreateThread(nullptr, 64 * 1024, NetThread, j, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
@@ -396,8 +402,10 @@ static void CleanupOldExe() {
     for (int i = 0; i < 25 && GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES; i++) { if (DeleteFileW(old.c_str())) break; Sleep(200); }
     DeleteFileW((ExePath() + L".new").c_str());
 }
+static void ParseWeather(const std::string& body);   // panels.inc
 static void HandleNet(NetJob* j) {
     g_netBusy[j->kind] = 0;
+    if (j->kind == NET_WEATHER) { if (!j->body.empty()) ParseWeather(j->body); delete j; return; }
     if (j->kind == NET_CAL) {
         if (j->body.empty()) g_calError = j->status ? Fmt(L"calendar link returned HTTP %lu", j->status) : L"couldn't reach the calendar link";
         else if (j->body.find("BEGIN:VCALENDAR") == std::string::npos) g_calError = L"that link didn't return a calendar (.ics)";
@@ -423,8 +431,10 @@ static void HandleNet(NetJob* j) {
     }
     delete j;
 }
+static void TravelAddHome();   // features.inc
 static void OpenBalloonLink() {
     if (g_balloonUpdate) { g_balloonUpdate = false; OfferUpdate(); return; }
+    if (g_balloonTravel) { g_balloonTravel = false; TravelAddHome(); return; }
     std::wstring u = g_balloonUrl; g_balloonUrl.clear();
     if (u.compare(0, 8, L"https://") == 0) ShellExecuteW(nullptr, L"open", u.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }

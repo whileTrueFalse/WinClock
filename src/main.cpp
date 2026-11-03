@@ -55,13 +55,13 @@ static const DWORD PINK_SOFT   = 0xFFFF7AB6;
 static inline DWORD A(DWORD c, int a) { return ((DWORD)(a & 0xFF) << 24) | (c & 0x00FFFFFF); }
 
 // ---------------------------------------------------------------- types
-enum Layout { L_LIST, L_ANALOG, L_TIMELINE, L_COMPACT, L_COUNT };
-static const wchar_t* kLayoutKey[]  = { L"list", L"analog", L"timeline", L"compact" };
-static const wchar_t* kLayoutName[] = { L"&Table", L"&Analog faces", L"&Timeline planner", L"&Compact" };
+enum Layout { L_LIST, L_ANALOG, L_TIMELINE, L_COMPACT, L_STRIP, L_COUNT };
+static const wchar_t* kLayoutKey[]  = { L"list", L"analog", L"timeline", L"compact", L"strip" };
+static const wchar_t* kLayoutName[] = { L"&Table", L"&Analog faces", L"&Timeline planner", L"&Compact", L"&Mini strip (one line)" };
 
-enum Theme { T_ELECTRIC, T_SNOW, T_PINK, T_BLUE, T_GLASS, T_TRANSPARENT, T_AUTO, T_COUNT, T_HC };
-static const wchar_t* kThemeKey[]  = { L"terminal", L"paper", L"synthwave", L"periwinkle", L"glass", L"transparent", L"auto" };
-static const wchar_t* kThemeName[] = { L"&Terminal (dark)", L"&Paper (light)", L"&Synthwave", L"&Periwinkle", L"G&lass", L"T&ransparent", L"&Auto (follow Windows light/dark)" };
+enum Theme { T_ELECTRIC, T_SNOW, T_PINK, T_BLUE, T_GLASS, T_TRANSPARENT, T_AUTO, T_CUSTOM, T_COUNT, T_HC };
+static const wchar_t* kThemeKey[]  = { L"terminal", L"paper", L"synthwave", L"periwinkle", L"glass", L"transparent", L"auto", L"custom" };
+static const wchar_t* kThemeName[] = { L"&Terminal (dark)", L"&Paper (light)", L"&Synthwave", L"&Periwinkle", L"G&lass", L"T&ransparent", L"&Auto (follow Windows light/dark)", L"&Custom (your colours)" };
 
 enum ZMode { Z_DESKTOP, Z_TOP };
 
@@ -84,6 +84,7 @@ static int ResolveTheme(int t) {
     return g_appsLight ? T_SNOW : T_ELECTRIC;
 }
 
+static ThemeC CustomTheme();   // built from the user's colours (defined after the settings)
 static DWORD SysCol(int idx) { COLORREF c = GetSysColor(idx); return 0xFF000000 | (GetRValue(c) << 16) | (GetGValue(c) << 8) | GetBValue(c); }
 static ThemeC GetTheme(int t) {
     switch (t) {
@@ -106,6 +107,7 @@ static ThemeC GetTheme(int t) {
     case T_TRANSPARENT:
         return { 0x01000000, 0, A(SNOW, 0x45), SNOW, 0xFFD0D6F5, A(SNOW, 0x22), A(ELECTRIC, 0x40),
                  PINK, ELECTRIC, NAVY, A(NAVY, 0x9A), A(NAVY, 0xB0), SNOW, PINK, true };
+    case T_CUSTOM: return CustomTheme();
     default:      // terminal
         return { A(NAVY, 0xF6), A(ELECTRIC, 0x30), 0xFF2B3266, SNOW, 0xFFA9B1DC, 0xFF1E2550, 0xFF1A2152,
                  PINK, ELECTRIC, NAVY, 0xFF11163A, 0xFFE6E8FF, NAVY, PINK, false };
@@ -145,6 +147,11 @@ struct Settings {
     std::wstring profile = L"Default";
     std::wstring calUrl; bool calOn = false; int calWarn = 5;
     int lastUpdDay = 0;
+    // 2.5 extras
+    bool showMap = false, weather = false, weatherF = false, prayer = false, asrHanafi = false;
+    int prayerMethod = 0, focusMin = 25, breakMin = 5, longMin = 15, lang = 0;
+    std::wstring markets, lastLocalTz;
+    DWORD cBg = 0xFF101418, cFg = 0xFFEDEFF5, cAccent = 0xFF34D399, cBlue = 0xFF60A5FA;   // custom theme
 };
 
 struct Surface { HDC dc = nullptr; HBITMAP bmp = nullptr, old = nullptr; void* bits = nullptr; int w = 0, h = 0; };
@@ -172,7 +179,7 @@ struct Bar {
     int rot = 0, rotCount = 0; long long key = -1;
     RECT lastTb{}, lastTray{}; int lastX = INT_MIN, lastY = INT_MIN;
     bool down = false, dragging = false; POINT downPt{}; int downX = 0, downY = 0;
-    bool tracking = false; Tip tip; bool light = false;
+    bool tracking = false; Tip tip; bool light = false; RECT timerRc{};
     bool autoRotate = false; std::vector<int> shown;
 };
 
@@ -181,6 +188,7 @@ static HINSTANCE g_inst;
 static HWND g_main;
 static std::wstring g_ini;
 static Settings S;
+static const wchar_t* T(const wchar_t* en);   // i18n.inc
 static std::vector<Clock> g_clocks;
 static Clock g_localClock;
 static long long g_shift = 0;         // minutes the whole display is shifted (planning)
@@ -209,6 +217,19 @@ static const wchar_t* kDays[]   = { L"Sun", L"Mon", L"Tue", L"Wed", L"Thu", L"Fr
 static const wchar_t* kDaysL[]  = { L"Sunday", L"Monday", L"Tuesday", L"Wednesday", L"Thursday", L"Friday", L"Saturday" };
 static const wchar_t* kMonths[] = { L"Jan", L"Feb", L"Mar", L"Apr", L"May", L"Jun", L"Jul", L"Aug", L"Sep", L"Oct", L"Nov", L"Dec" };
 static const wchar_t* kMonthsL[]= { L"January", L"February", L"March", L"April", L"May", L"June", L"July", L"August", L"September", L"October", L"November", L"December" };
+
+static DWORD MixC(DWORD a, DWORD b, float t) {   // blend two colours, t = share of b
+    auto ch = [&](int sh) { return (DWORD)std::clamp((int)lroundf(((a >> sh) & 0xFF) * (1 - t) + ((b >> sh) & 0xFF) * t), 0, 255) << sh; };
+    return 0xFF000000 | ch(16) | ch(8) | ch(0);
+}
+static bool IsLightC(DWORD c) { return (((c >> 16) & 0xFF) * 299 + ((c >> 8) & 0xFF) * 587 + (c & 0xFF) * 114) / 1000 > 140; }
+static ThemeC CustomTheme() {
+    DWORD bg = S.cBg | 0xFF000000, fg = S.cFg | 0xFF000000, ac = S.cAccent | 0xFF000000, b2 = S.cBlue | 0xFF000000;
+    bool light = IsLightC(bg);
+    return { A(bg, 0xF6), A(b2, 0x40), MixC(bg, b2, 0.35f), fg, MixC(fg, bg, 0.35f), MixC(bg, fg, 0.12f), MixC(bg, b2, 0.18f),
+             ac, b2, IsLightC(b2) ? 0xFF101010 : 0xFFFFFFFF, MixC(bg, fg, 0.06f), light ? 0xFF1A1A1A : MixC(fg, bg, 0.05f),
+             light ? 0xFFF2F2F2 : MixC(bg, bg, 0), ac, false };
+}
 
 // ---------------------------------------------------------------- city aliases
 struct Alias { const wchar_t* city; const wchar_t* tz; const wchar_t* cc; double lat, lon; };
@@ -513,6 +534,7 @@ static int IsoWeek(const SYSTEMTIME& st, int* doy) {
     return w;
 }
 
+static std::wstring TooltipExtras(const Clock& c, long long u);   // panels.inc: weather, moon, prayer times
 static std::wstring ClockTooltip(int i, const Frame& fr) {
     const Clock& c = g_clocks[i]; const CTime& t = fr.t[i];
     std::wstring zone = c.kind == 1 ? g_localKey + L" (this PC)" : c.kind == 2 ? L"Coordinated Universal Time" : (c.valid ? c.tzid : c.tzid + L" (not found)");
@@ -533,6 +555,7 @@ static std::wstring ClockTooltip(int i, const Frame& fr) {
         s += L"Sunrise " + Lower(FmtHMFull(a)) + L"  ·  sunset " + Lower(FmtHMFull(b)) + L"\n";
     } else if (k == 1) s += L"Sun up all day\n"; else if (k == 2) s += L"Sun down all day\n";
     std::wstring dn = DstNoteFor(c); if (!dn.empty()) s += dn + L"\n";
+    s += TooltipExtras(c, (long long)(fr.utc / TPM));
     if (!c.note.empty() && st != ST_AWAY) s += L"Note: " + c.note + L"\n";
     s += zone;
     if (g_shift) s += L"\n(shifted " + FmtShift() + L")";
@@ -540,7 +563,8 @@ static std::wstring ClockTooltip(int i, const Frame& fr) {
 }
 
 // ---------------------------------------------------------------- alarms & countdowns
-struct Alarm { std::wstring label, tzid; int hh = 9, mm = 0, rep = 0, y = 0, mo = 0, d = 0; bool enabled = true; long long next = -1; };
+struct Alarm { std::wstring label, tzid; int hh = 9, mm = 0, rep = 0, y = 0, mo = 0, d = 0; bool enabled = true; long long next = -1; int lead = 0; long long firedFor = -1; };
+static const int kLeads[] = { 0, 5, 10, 15, 30, 60, 120, 180, 240, 1440 };
 static std::vector<Alarm> g_alarms;
 static std::wstring g_flash; static ULONGLONG g_flashUntil = 0;
 static HICON g_bigIcon = nullptr;
@@ -619,8 +643,9 @@ static float FooterH(float s) { return NextAlarmIdx() >= 0 ? 28 * s : 0; }
 static bool g_trayAdded = false;
 static void AddTrayIcon();
 static bool g_balloonUpdate = false;   // set right after showing the update balloon; any other balloon clears it
+static bool g_balloonTravel = false;   // set right after the "new time zone" balloon
 static void Balloon(const std::wstring& title, const std::wstring& text) {
-    g_balloonUpdate = false;
+    g_balloonUpdate = false; g_balloonTravel = false;
     if (!g_trayAdded) { AddTrayIcon(); if (!S.trayIcon) SetTimer(g_main, 5, 12000, nullptr); }
     if (!g_nid.hWnd) return;
     NOTIFYICONDATAW n = g_nid; n.uFlags = NIF_INFO;
@@ -666,6 +691,15 @@ static void PlayAlert() {
 }
 static void FireAlarm(const Alarm& a) {
     std::wstring body = AlarmWhen(a, false);
+    if (a.lead > 0) {   // a "leave by" reminder: the event is still ahead
+        body = a.label + L" at " + body + L"  (in " + FmtSpan(std::max(1LL, a.next - NowMin())) + L")";
+        CTime local = ClockAt(g_localClock, (ULONGLONG)a.next * TPM);
+        if (_wcsicmp(a.tzid.c_str(), L"Local") != 0) body += L"\n= " + FmtHMFull(local.st) + L" your time";
+        Balloon(L"\u23f0 Time to go: " + a.label, body); PlayAlert();
+        g_flash = L"leave now \u00b7 " + a.label + L" in " + FmtSpan(std::max(1LL, a.next - NowMin()));
+        g_flashUntil = GetTickCount64() + 5 * 60 * 1000;
+        return;
+    }
     if (_wcsicmp(a.tzid.c_str(), L"Local") != 0) {
         CTime local = ClockAt(g_localClock, (ULONGLONG)a.next * TPM);
         body += L"\n= " + FmtHMFull(local.st) + L" your time";
@@ -680,8 +714,12 @@ static void CheckAlarms() {
     for (auto& a : g_alarms) {
         if (!a.enabled) continue;
         if (a.next < 0) { ComputeNext(a, now); continue; }
+        long long trig = a.next - a.lead;
+        if (trig <= now && a.firedFor != a.next) {
+            if (now - trig <= 60) FireAlarm(a);   // skip alarms missed by more than an hour (PC was off)
+            a.firedFor = a.next;
+        }
         if (a.next <= now) {
-            if (now - a.next <= 60) FireAlarm(a);   // skip alarms missed by more than an hour (PC was off)
             if (a.rep == 0) { a.enabled = false; a.next = -1; changed = true; }
             else ComputeNext(a, now);
         }
@@ -814,11 +852,21 @@ static void LoadSettings() {
     S.hotkey = IniInt(s, L"Hotkey", 1) != 0;
     S.hkShow = (WORD)IniInt(s, L"HotkeyShow", 0x0657); S.hkConvert = (WORD)IniInt(s, L"HotkeyConvert", 0x0656);
     S.hkPalette = (WORD)IniInt(s, L"HotkeyPalette", 0x064B);
+    S.showMap = IniInt(s, L"ShowMap", 0) != 0; S.weather = IniInt(s, L"Weather", 0) != 0; S.weatherF = IniInt(s, L"WeatherF", 0) != 0;
+    S.prayer = IniInt(s, L"PrayerTimes", 0) != 0; S.prayerMethod = IniInt(s, L"PrayerMethod", 0); S.asrHanafi = IniInt(s, L"AsrHanafi", 0) != 0;
+    S.focusMin = std::clamp(IniInt(s, L"FocusMinutes", 25), 1, 180); S.breakMin = std::clamp(IniInt(s, L"BreakMinutes", 5), 1, 60); S.longMin = std::clamp(IniInt(s, L"LongBreakMinutes", 15), 1, 90);
+    S.markets = IniStr(s, L"Markets", L""); S.lastLocalTz = IniStr(s, L"LastLocalZone", L"");
+    S.lang = IniInt(s, L"Language", 0);
+    S.cBg = 0xFF000000 | (DWORD)IniInt(s, L"CustomBg", 0x101418); S.cFg = 0xFF000000 | (DWORD)IniInt(s, L"CustomFg", 0xEDEFF5);
+    S.cAccent = 0xFF000000 | (DWORD)IniInt(s, L"CustomAccent", 0x34D399); S.cBlue = 0xFF000000 | (DWORD)IniInt(s, L"CustomSecondary", 0x60A5FA);
     S.chime = IniInt(s, L"HourlyChime", 0) != 0;
     S.tbWhich = IniInt(s, L"TaskbarWhich", 0) ? 1 : 0;
     S.tbAllMon = IniInt(s, L"TaskbarAllMonitors", 0) != 0;
     S.trayTime = IniInt(s, L"TrayShowsTime", 0) != 0;
-    S.updates = IniInt(s, L"UpdateCheck", 1) != 0;   // new key, so it is on for everyone by default
+    S.updates = IniInt(s, L"UpdateCheck", 1) != 0;
+#ifdef STORE_BUILD
+    S.updates = false;   // the Microsoft Store updates the app
+#endif   // new key, so it is on for everyone by default
     S.lastUpdDay = IniInt(s, L"LastUpdateCheck", 0);
     S.profile = IniStr(s, L"Profile", L"Default"); if (S.profile.empty()) S.profile = L"Default";
     S.autoProfile = IniInt(s, L"AutoProfile", 0) != 0;
@@ -840,7 +888,13 @@ static void SaveSettings() {
     IniPutI(s, L"Visible", S.visible); IniPutI(s, L"Taskbar", S.tbShow);
     IniPut(s, L"TaskbarMode", S.tbRotate ? L"rotate" : L"all"); IniPutI(s, L"TaskbarLabels", S.tbLabels);
     IniPutI(s, L"TaskbarOffset", S.tbOffset); IniPut(s, L"TaskbarAnchor", S.tbAnchor == 1 ? L"left" : S.tbAnchor == 2 ? L"custom" : L"right"); IniPutI(s, L"TrayIcon", S.trayIcon); IniPutI(s, L"WorkStart", S.workStart); IniPutI(s, L"WorkEnd", S.workEnd);
-    IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HotkeyShow", S.hkShow); IniPutI(s, L"HotkeyConvert", S.hkConvert); IniPutI(s, L"HotkeyPalette", S.hkPalette); IniPutI(s, L"HourlyChime", S.chime);
+    IniPutI(s, L"AnalogColumns", S.cols); IniPutI(s, L"Hotkey", S.hotkey); IniPutI(s, L"HotkeyShow", S.hkShow); IniPutI(s, L"HotkeyConvert", S.hkConvert); IniPutI(s, L"HotkeyPalette", S.hkPalette);
+    IniPutI(s, L"ShowMap", S.showMap); IniPutI(s, L"Weather", S.weather); IniPutI(s, L"WeatherF", S.weatherF);
+    IniPutI(s, L"PrayerTimes", S.prayer); IniPutI(s, L"PrayerMethod", S.prayerMethod); IniPutI(s, L"AsrHanafi", S.asrHanafi);
+    IniPutI(s, L"FocusMinutes", S.focusMin); IniPutI(s, L"BreakMinutes", S.breakMin); IniPutI(s, L"LongBreakMinutes", S.longMin);
+    IniPut(s, L"Markets", S.markets); IniPut(s, L"LastLocalZone", S.lastLocalTz); IniPutI(s, L"Language", S.lang);
+    IniPutI(s, L"CustomBg", (int)(S.cBg & 0xFFFFFF)); IniPutI(s, L"CustomFg", (int)(S.cFg & 0xFFFFFF));
+    IniPutI(s, L"CustomAccent", (int)(S.cAccent & 0xFFFFFF)); IniPutI(s, L"CustomSecondary", (int)(S.cBlue & 0xFFFFFF)); IniPutI(s, L"HourlyChime", S.chime);
     IniPutI(s, L"TaskbarWhich", S.tbWhich); IniPutI(s, L"TaskbarAllMonitors", S.tbAllMon); IniPutI(s, L"TrayShowsTime", S.trayTime);
     IniPutI(s, L"UpdateCheck", S.updates); IniPutI(s, L"LastUpdateCheck", S.lastUpdDay);
     IniPut(s, L"Profile", S.profile); IniPutI(s, L"AutoProfile", S.autoProfile);
@@ -865,6 +919,7 @@ static void LoadAlarms() {
         a.hh = std::clamp(a.hh, 0, 23); a.mm = std::clamp(a.mm, 0, 59);
         a.rep = std::clamp(_wtoi(f[3].c_str()), 0, 3); a.enabled = f[4] == L"1";
         if (f.size() > 5 && !f[5].empty() && swscanf(f[5].c_str(), L"%d-%d-%d", &a.y, &a.mo, &a.d) != 3) a.y = a.mo = a.d = 0;
+        if (f.size() > 6) a.lead = std::clamp(_wtoi(f[6].c_str()), 0, 2880);
         if (a.enabled) ComputeNext(a, now);
         g_alarms.push_back(a);
     }
@@ -874,7 +929,7 @@ static void SaveAlarms() {
     IniPutI(L"Alarms", L"Count", (int)g_alarms.size());
     for (size_t i = 0; i < g_alarms.size(); i++) {
         const Alarm& a = g_alarms[i]; std::wstring lab = a.label; std::replace(lab.begin(), lab.end(), L'|', L'/');
-        std::wstring v = lab + L"|" + a.tzid + Fmt(L"|%02d:%02d|%d|%d|", a.hh, a.mm, a.rep, a.enabled ? 1 : 0) + (a.y ? Fmt(L"%04d-%02d-%02d", a.y, a.mo, a.d) : std::wstring());
+        std::wstring v = lab + L"|" + a.tzid + Fmt(L"|%02d:%02d|%d|%d|", a.hh, a.mm, a.rep, a.enabled ? 1 : 0) + (a.y ? Fmt(L"%04d-%02d-%02d", a.y, a.mo, a.d) : std::wstring()) + Fmt(L"|%d", a.lead);
         IniPut(L"Alarms", (L"Alarm" + std::to_wstring(i + 1)).c_str(), v);
     }
 }
@@ -909,6 +964,9 @@ static void LoadFam(int i, std::initializer_list<FamTry> tries) {
 static void InitFonts() {
     // Words use the system font, Segoe UI Variable, which ships optical sizes (Small / Text / Display) the way SF Pro does.
     // Times and numbers use Cascadia Mono: tabular digits that don't jitter as they tick, and the terminal look.
+    if (S.lang == 1) {   // Hindi: Devanagari needs Nirmala UI everywhere (GDI+ doesn't fall back between fonts)
+        for (int i = 0; i < 8; i++) LoadFam(i, { { (i % 2) ? L"Nirmala UI Semibold" : L"Nirmala UI", false }, { L"Nirmala UI", (i % 2) != 0 }, { L"Segoe UI", false } });
+    } else {
     LoadFam(0, { { L"Segoe UI Variable Small", false }, { L"Segoe UI", false } });
     LoadFam(1, { { L"Segoe UI Variable Small Semibold", false }, { L"Segoe UI Semibold", false }, { L"Segoe UI", true } });
     LoadFam(2, { { L"Segoe UI Variable Text", false }, { L"Segoe UI", false } });
@@ -917,6 +975,7 @@ static void InitFonts() {
     LoadFam(5, { { L"Segoe UI Variable Display Semibold", false }, { L"Segoe UI Semibold", false }, { L"Segoe UI", true } });
     LoadFam(6, { { L"Cascadia Mono", false }, { L"Consolas", false } });
     LoadFam(7, { { L"Cascadia Mono SemiBold", false }, { L"Consolas", true } });
+    }
     g_fmt = G::StringFormat::GenericTypographic()->Clone();
     g_fmt->SetFormatFlags(G::StringFormatFlagsNoWrap | G::StringFormatFlagsMeasureTrailingSpaces | G::StringFormatFlagsNoClip);
     g_fmtEll = G::StringFormat::GenericTypographic()->Clone();
@@ -1057,7 +1116,7 @@ static bool LayoutHasSeconds(int layout) { return S.secs && !g_shift && (layout 
 static const float kM = 10, kTitle = 16, kTop = 38, kStatusH = 24, kBot = 12 + 10 + 24 + 10, kSide = 24;
 struct Col { const wchar_t* name; float w; };
 static const Col kCols[] = { { L"ID", 42 }, { L"CITY / PERSON", 170 }, { L"TIME", 138 }, { L"STATE", 86 }, { L"OFFSET", 104 }, { L"DAY", 88 } };
-static const wchar_t* kLayoutTitle[] = { L"world clocks", L"analog", L"timeline", L"world clocks" };
+static const wchar_t* kLayoutTitle[] = { L"world clocks", L"analog", L"timeline", L"world clocks", L"" };
 
 static void ContentSize(int layout, int n, float& cw, float& ch) {
     n = std::max(n, 1);
@@ -1065,14 +1124,16 @@ static void ContentSize(int layout, int n, float& cw, float& ch) {
     case L_ANALOG: { int cols = std::max(1, std::min(S.cols, n)); int rows = (n + cols - 1) / cols; cw = cols * 148.f; ch = rows * 212.f; break; }
     case L_TIMELINE: cw = 640; ch = 28 + n * 42.f; break;
     case L_COMPACT: cw = 320; ch = n * 31.f; break;
+    case L_STRIP: cw = 0; ch = 0; break;
     default: cw = 0; for (auto& c : kCols) cw += c.w; ch = 28 + n * 38.f; break;
     }
 }
 static float PinsH() { int np = std::min((int)g_pins.size(), 4); return np ? 10.f + 26.f * np : 0.f; }
+static float ExtrasH(float cw);   // panels.inc
 static void ComputeSize(int layout, int n, float s, float& W, float& H) {
     float cw, ch; ContentSize(layout, n, cw, ch);
     W = std::max((cw + 2 * kSide) * s, 340 * s);
-    H = (kTop + ch + PinsH() + kBot) * s;
+    H = (kTop + ch + ExtrasH(W / s - 2 * kSide) + kBot) * s;
 }
 
 static std::wstring OffShort(int mins) {
@@ -1116,6 +1177,8 @@ static void DotFill(Ctx& c, float x, float y, float w, float h, int alpha) {
     c.g.FillRectangle(&hb, x, y, w, h);
 }
 
+#include "panels.inc"
+
 // ---- table (list) layout
 static void DrawList(Ctx& c, float top) {
     float s = c.s, x0 = c.x0, x1 = c.x1, hh = 28 * s, rh = 38 * s;
@@ -1126,7 +1189,7 @@ static void DrawList(Ctx& c, float top) {
     cx[6] = x1;
     { G::SolidBrush hb{ G::Color(c.th.blue) }; c.g.FillRectangle(&hb, x0, top, x1 - x0, hh); }
     FontE* fh = F(FMS, 11.5f * s);
-    for (int k = 0; k < 6; k++) DT(c.g, kCols[k].name, fh, cx[k] + 10 * s, top + 18.5f * s, c.th.headFg);
+    for (int k = 0; k < 6; k++) DT(c.g, T(kCols[k].name), fh, cx[k] + 10 * s, top + 18.5f * s, c.th.headFg);
     { G::Pen dp{ G::Color(A(c.th.headFg, 0x45)), 1 }; c.g.DrawLine(&dp, cx[3] - 0.5f, top, cx[3] - 0.5f, top + hh); }
     int n = (int)g_clocks.size(); if (!n) { DrawEmpty(c, top + hh); return; }
     for (int i = 0; i < n; i++) {
@@ -1137,17 +1200,25 @@ static void DrawList(Ctx& c, float top) {
         SafeDot(c.g, c.th, st, cx[1] + p + 3 * s, b - 5 * s, s);
         {
             std::wstring nm = DisplayName(i); FontE* fn = F(FS, 14.5f * s); float room = cx[2] - cx[1] - p - 18 * s, nw = std::min(room, TW(c.g, nm, fn));
+            if (WeatherFor(g_clocks[i])) { room -= 46 * s; nw = std::min(room, nw); }
             DT(c.g, nm, fn, cx[1] + p + 12 * s, b, c.th.fg, AL, room, c.th.shadow);
             std::wstring why; int s2 = ClockStatusAt(g_clocks[i], t.st, &why);
             std::wstring note = (s2 == ST_HOLIDAY || s2 == ST_AWAY) ? why : g_clocks[i].note;
-            if (!note.empty() && room - nw > 30 * s) DT(c.g, L" \u00b7 " + note, F(FR, 12 * s), cx[1] + p + 12 * s + nw, b, c.th.dim, AL, room - nw, c.th.shadow);
+            float wxW = 0;
+            if (const Weather* wx = WeatherFor(g_clocks[i])) {   // small icon + temperature at the right of the city column
+                std::wstring tt = WxTemp(*wx); FontE* fw = F(FM, 12 * s); float tw = TW(c.g, tt, fw);
+                float rx = cx[2] - p; wxW = tw + 22 * s;
+                DT(c.g, tt, fw, rx, b, c.th.dim, AR, 0, c.th.shadow);
+                DrawWxIcon(c.g, wx->code, SunUpAt(g_clocks[i], (long long)(c.fr.utc / TPM)) == 0, rx - tw - 10 * s, b - 4.5f * s, 6.5f * s, c.th.dim, c.th.accent);
+            }
+            if (!note.empty() && room - nw - wxW > 30 * s) DT(c.g, L" \u00b7 " + note, F(FR, 12 * s), cx[1] + p + 12 * s + nw, b, c.th.dim, AL, room - nw - wxW, c.th.shadow);
         }
         std::wstring ap, hm = FmtHM(t.st, &ap);
         FontE* ftm = F(FMS, 18 * s); FontE* fsm = F(FM, 12 * s); float tx = cx[2] + p;
         DT(c.g, hm, ftm, tx, b + 0.5f * s, c.th.fg, AL, 0, c.th.shadow); tx += TW(c.g, hm, ftm);
         if (S.secs && !g_shift) { std::wstring sc = Fmt(L":%02d", t.st.wSecond); DT(c.g, sc, fsm, tx, b, c.th.dim, AL, 0, c.th.shadow); tx += TW(c.g, sc, fsm); }
         if (!ap.empty()) DT(c.g, Lower(ap), fsm, tx + 4 * s, b, c.th.accent, AL, 0, c.th.shadow);
-        DT(c.g, Lower(kStatus[st]), F(FS, 13 * s), cx[3] + p, b, StatusColor(c.th, st), AL, 0, c.th.shadow);
+        DT(c.g, Lower(T(kStatus[st])), F(FS, 13 * s), cx[3] + p, b, StatusColor(c.th, st), AL, 0, c.th.shadow);
         { std::wstring oc = OffCore(i, c.fr); FontE* fo = F(FM, 13 * s); float ow = TW(c.g, oc, fo);
           DT(c.g, oc, fo, cx[4] + p, b, c.th.dim, AL, cx[5] - cx[4] - p, c.th.shadow);
           DayPill(c.g, c.th, (int)(DayNum(t.st) - DayNum(c.fr.local.st)), cx[4] + p + ow + 6 * s, b, s); }
@@ -1197,7 +1268,7 @@ static void DrawAnalog(Ctx& c, float top) {
         float b = cy + r + 22 * s;
         DT(c.g, DisplayName(i), F(FS, 15 * s), cx, b, c.th.fg, AC, tw - 12 * s, c.th.shadow);
         DT(c.g, TimeLower(t.st), F(FM, 14 * s), cx, b + 21 * s, c.th.fg, AC, 0, c.th.shadow);
-        std::wstring sw = Lower(kStatus[st]), ow = L" · " + OffFor(i, c.fr);
+        std::wstring sw = Lower(T(kStatus[st])), ow = L" · " + OffFor(i, c.fr);
         FontE* f3 = F(FR, 12.5f * s); float w1 = TW(c.g, sw, f3), w2 = TW(c.g, ow, f3), sx = cx - (w1 + w2) / 2;
         DT(c.g, sw, f3, sx, b + 40 * s, StatusColor(c.th, st), AL, 0, c.th.shadow);
         DT(c.g, ow, f3, sx + w1, b + 40 * s, c.th.dim, AL, 0, c.th.shadow);
@@ -1314,6 +1385,7 @@ static void PaintView(View& v) {
     if (!g_shift) g_conv.on = false;
     FontsGC();
     Frame fr = MakeFrame();
+    if (layout == L_STRIP) { PaintStrip(v, s, theme, fr); return; }
     float W, H; ComputeSize(layout, (int)g_clocks.size(), s, W, H);
     int w = (int)ceilf(W), h = (int)ceilf(H);
     EnsureSurface(v.surf, w, h);
@@ -1335,7 +1407,7 @@ static void PaintView(View& v) {
             g.SetCompositingMode(G::CompositingModeSourceOver); g.SetSmoothingMode(G::SmoothingModeAntiAlias); g.SetPixelOffsetMode(G::PixelOffsetModeHalf);
         };
         FontE* ft = F(FMS, 13.5f * s);
-        std::wstring title = std::wstring(L"[ ") + kLayoutTitle[layout] + L" ]";
+        std::wstring title = std::wstring(L"[ ") + T(kLayoutTitle[layout]) + L" ]";
         float tx = bx0 + 16 * s, tw = TW(g, title, ft);
         erase(tx - 6 * s, by0 - 4 * s, tw + 12 * s, 8 * s);
         DT(g, title, ft, tx, by0 + 4.5f * s, th.blue, AL, 0, th.shadow);
@@ -1352,11 +1424,13 @@ static void PaintView(View& v) {
         default: DrawList(c, top); break;
         }
 
+        // answer cards, timers, markets, map
+        float cw0, ch0; ContentSize(layout, (int)g_clocks.size(), cw0, ch0);
+        DrawPanels(c, (kTop + ch0) * s);
         // pinned moments
         int np = std::min((int)g_pins.size(), 4);
         if (np) {
-            float cw, ch; ContentSize(layout, (int)g_clocks.size(), cw, ch);
-            float py = (kTop + ch + 6) * s, x0 = c.x0, x1 = c.x1;
+            float py = (kTop + ch0 + ExtrasH(w / s - 2 * kSide) - PinsH() + 6) * s, x0 = c.x0, x1 = c.x1;
             G::Pen sp{ G::Color(th.sep), 1 }; g.DrawLine(&sp, x0, py, x1, py);
             for (int k = 0; k < np; k++) {
                 const Pin& pn = g_pins[k]; float y = py + 4 * s + k * 26 * s, b = y + 17 * s;
@@ -1377,7 +1451,7 @@ static void PaintView(View& v) {
 
         // vim-style status bar
         { G::SolidBrush sb{ G::Color(th.statusBg) }; g.FillRectangle(&sb, bx0, sy, bx1 - bx0, kStatusH * s); }
-        const wchar_t* mode = !g_flash.empty() ? L"ALARM" : (g_conv.on && g_shift) ? L"CONVERT" : g_shift ? L"SHIFT" : L"NORMAL";
+        const wchar_t* mode = !g_flash.empty() ? L"ALARM" : (g_conv.on && g_shift) ? L"CONVERT" : g_shift ? L"SHIFT" : g_focus.phase == 1 ? L"FOCUS" : g_focus.phase ? L"BREAK" : L"NORMAL";
         FontE* fsb = F(FMS, 12 * s); float base = sy + 16.5f * s;
         DT(g, mode, fsb, bx0 + 12 * s, base, th.mode);
         float mw = TW(g, mode, fsb);
@@ -1412,7 +1486,7 @@ static void PaintView(View& v) {
     v.W = w; v.H = h;
     Present(v.hwnd, v.surf, v.fly ? v.animAlpha : (BYTE)(S.opacity * 255 / 100), nullptr);
     long long secs = (long long)(fr.utc / 10000000ULL);
-    v.key = LayoutHasSeconds(layout) ? secs : secs / 60;
+    v.key = (LayoutHasSeconds(layout) || TimerActive()) ? secs : secs / 60;
 }
 
 // ---------------------------------------------------------------- taskbar strip
@@ -1472,6 +1546,8 @@ static void UpdateBarFor(Bar& b, HWND tray, bool primary, bool force) {
 
     FILETIME ft; GetSystemTimeAsFileTime(&ft);
     long long key = (long long)((FtU(ft) / TPM)) + g_shift * 7 + b.rot * 1000003LL + b.hover * 31 + (S.h24 ? 5 : 0) + (long long)b.items.size() * 7919;
+    std::wstring tmText = primary ? TimerBarText() : std::wstring();
+    if (!tmText.empty()) key = key * 31 + (long long)std::hash<std::wstring>()(tmText);
     bool light = TaskbarIsLight();
     bool geomSame = EqualRect(&twr, &b.lastTb) && EqualRect(&nr, &b.lastTray);
     if (!force && key == b.key && geomSame && light == b.light && !b.dragging) { if (!b.visible) { ShowWindow(b.hwnd, SW_SHOWNOACTIVATE); b.visible = true; } return; }
@@ -1518,12 +1594,16 @@ static void UpdateBarFor(Bar& b, HWND tray, bool primary, bool force) {
         for (int k = 0; k < per; k++) shown.push_back(b.items[(b.rot * per + k) % b.items.size()]);
         widths.assign(shown.size(), maxW);
     }
-    int W, H; b.cells.clear(); b.shown = shown;
+    int W, H; b.cells.clear(); b.shown = shown; b.timerRc = RECT{};
+    int tmW = 0;
+    if (!tmText.empty()) { HDC sdc = GetDC(nullptr); { G::Graphics mg(sdc); tmW = (int)ceilf(TW(mg, tmText, fT) + 22 * d); } ReleaseDC(nullptr, sdc); }
     if (b.horiz) {
-        H = thick; W = 0;
+        H = thick; W = tmW;
+        if (tmW) b.timerRc = { 0, 0, tmW, H };
         for (float w : widths) { b.cells.push_back({ W, 0, W + (int)ceilf(w), H }); W += (int)ceilf(w); }
     } else {
         W = thick; H = 0; int ch = (int)(44 * d);
+        if (tmW) { b.timerRc = { 0, 0, W, ch }; H = ch; }
         for (size_t k = 0; k < widths.size(); k++) { b.cells.push_back({ 0, H, W, H + ch }); H += ch; }
     }
     W = std::max(W, 1); H = std::max(H, 1);
@@ -1548,6 +1628,11 @@ static void UpdateBarFor(Bar& b, HWND tray, bool primary, bool force) {
         G::Bitmap bmp(W, H, W * 4, PixelFormat32bppPARGB, (BYTE*)b.surf.bits);
         G::Graphics g(&bmp); SetupGraphics(g); g.Clear(G::Color(0x01000000));   // alpha 1: invisible but clickable
         DWORD fg = light ? NAVY : SNOW, dim = light ? 0xFF4A537F : ICE;
+        if (!tmText.empty()) {   // focus timer / stopwatch, ticking every second
+            RECT rc = b.timerRc; float cx = (rc.left + rc.right) / 2.f, cy = (rc.top + rc.bottom) / 2.f;
+            FillRR(g, rc.left + 3 * d, rc.top + 7 * d, rc.right - rc.left - 6 * d, rc.bottom - rc.top - 14 * d, 6 * d, g_focus.phase == 1 ? A(PINK, 0x40) : A(ELECTRIC, 0x40));
+            DT(g, tmText, fT, cx, cy + 4.5f * d, fg, AC);
+        }
         for (size_t k = 0; k < shown.size(); k++) {
             int ci = shown[k]; RECT rc = b.cells[k]; const CTime& t = fr.t[ci];
             float cx = (rc.left + rc.right) / 2.f, cy = (rc.top + rc.bottom) / 2.f;
@@ -1626,6 +1711,7 @@ static void AddTrayIcon() {
 
 // ---------------------------------------------------------------- scheduling
 static bool NeedsSeconds() {
+    if (TimerActive()) return true;
     if (g_widget.hwnd && S.visible && LayoutHasSeconds(S.layout)) return true;
     if (g_flyout.hwnd && IsWindowVisible(g_flyout.hwnd) && LayoutHasSeconds(S.flyLayout)) return true;
     return false;
@@ -1648,9 +1734,10 @@ static void Tick(bool force) {
     long long secs = (long long)((FtU(ft) + (long long)g_shift * TPM) / 10000000ULL);
     auto check = [&](View& v, int layout) {
         if (!v.hwnd || !IsWindowVisible(v.hwnd)) return;
-        long long k = LayoutHasSeconds(layout) ? secs : secs / 60;
+        long long k = (LayoutHasSeconds(layout) || TimerActive()) ? secs : secs / 60;
         if (force || k != v.key) PaintView(v);
     };
+    if (TimerActive()) FocusTick();
     check(g_widget, S.layout); check(g_flyout, S.flyLayout);
     UpdateBar(force);
     static long long lastTipMin = -1;
@@ -1676,7 +1763,7 @@ static void AlarmTick() {
     bool repaint = hadFlash != !g_flash.empty() || !g_flash.empty();
     if (PrunePins()) repaint = true;
     if (now % 60 == 0 || g_dstAt < 0) CheckDstNotify();
-    CalTick(); UpdateTick();
+    CalTick(); UpdateTick(); WeatherTick();
     if (AutoProfileTick()) repaint = true;
     if (repaint) RefreshAll();
     ScheduleAlarmTimer();
@@ -2002,6 +2089,8 @@ static bool ReadAlarmFields(HWND d, AlarmDlg* st, Alarm& out, std::wstring& err)
         out.rep = 0;
     }
     out.enabled = IsDlgButtonChecked(d, IDC_AENABLED) == BST_CHECKED;
+    int li = (int)SendDlgItemMessageW(d, IDC_ALEAD, CB_GETCURSEL, 0, 0);
+    out.lead = kLeads[std::clamp(li, 0, (int)(sizeof(kLeads) / sizeof(*kLeads)) - 1)];
     return true;
 }
 static void AlarmDlgPreview(HWND d, AlarmDlg* st) {
@@ -2013,6 +2102,7 @@ static void AlarmDlgPreview(HWND d, AlarmDlg* st) {
     std::wstring s = L"Next: " + AlarmWhen(a, true) + L"\n= " + kDays[local.st.wDayOfWeek] + L" " + FmtHMFull(local.st) +
                      L" your time  ·  in " + FmtSpan(std::max(1LL, a.next - now));
     if (a.y) s += L"  (one-time countdown)";
+    if (a.lead) { CTime r = ClockAt(g_localClock, (ULONGLONG)(a.next - a.lead) * TPM); s += L"\nReminder at " + FmtHMFull(r.st) + L" your time"; }
     SetDlgItemTextW(d, IDC_APREVIEW, s.c_str());
 }
 static INT_PTR CALLBACK AlarmDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
@@ -2033,6 +2123,14 @@ static INT_PTR CALLBACK AlarmDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
         for (auto r : kRepeat) SendDlgItemMessageW(d, IDC_AREPEAT, CB_ADDSTRING, 0, (LPARAM)r);
         SendDlgItemMessageW(d, IDC_AREPEAT, CB_SETCURSEL, st->a.rep, 0);
         CheckDlgButton(d, IDC_AENABLED, st->a.enabled ? BST_CHECKED : BST_UNCHECKED);
+        { int ls = 0;
+          for (int i = 0; i < (int)(sizeof(kLeads) / sizeof(*kLeads)); i++) {
+              int v = kLeads[i];
+              std::wstring t = !v ? std::wstring(L"At the time") : v < 60 ? Fmt(L"%d min before (leave-by reminder)", v) : v < 1440 ? Fmt(L"%d h before (leave-by reminder)", v / 60) : std::wstring(L"1 day before");
+              SendDlgItemMessageW(d, IDC_ALEAD, CB_ADDSTRING, 0, (LPARAM)t.c_str());
+              if (v == st->a.lead) ls = i;
+          }
+          SendDlgItemMessageW(d, IDC_ALEAD, CB_SETCURSEL, ls, 0); }
         AlarmDlgPreview(d, st);
         SetForegroundWindow(d); SetFocus(GetDlgItem(d, IDC_ALABEL)); SendDlgItemMessageW(d, IDC_ALABEL, EM_SETSEL, 0, -1);
         return FALSE;
@@ -2040,7 +2138,7 @@ static INT_PTR CALLBACK AlarmDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     case WM_COMMAND:
         switch (LOWORD(wp)) {
         case IDC_ALABEL: case IDC_ATIME: case IDC_ADATE: if (HIWORD(wp) == EN_CHANGE) AlarmDlgPreview(d, st); break;
-        case IDC_ACLOCK: case IDC_AREPEAT: if (HIWORD(wp) == CBN_SELCHANGE) AlarmDlgPreview(d, st); break;
+        case IDC_ACLOCK: case IDC_AREPEAT: case IDC_ALEAD: if (HIWORD(wp) == CBN_SELCHANGE) AlarmDlgPreview(d, st); break;
         case IDOK: {
             Alarm a; std::wstring err;
             if (!ReadAlarmFields(d, st, a, err)) { MessageBoxW(d, err.c_str(), L"WinClock", MB_OK | MB_ICONWARNING); return TRUE; }
@@ -2052,11 +2150,12 @@ static INT_PTR CALLBACK AlarmDlgProc(HWND d, UINT m, WPARAM wp, LPARAM lp) {
     }
     return FALSE;
 }
-static void AlarmDialog(int idx) {
+static void AlarmDialog(int idx, int lead = 0);
+static void AlarmDialog(int idx, int lead) {
     static bool open = false; if (open) return; open = true;
     AlarmDlg st; st.opts = ZoneOptions(); st.edit = idx >= 0;
     if (st.edit) st.a = g_alarms[idx];
-    else { st.a.label = L"Meeting"; st.a.tzid = st.opts[0].second; SYSTEMTIME lt; GetLocalTime(&lt); st.a.hh = (lt.wHour + 1) % 24; st.a.mm = 0; }
+    else { st.a.label = lead ? L"Flight" : L"Meeting"; st.a.tzid = st.opts[0].second; SYSTEMTIME lt; GetLocalTime(&lt); st.a.hh = (lt.wHour + 1) % 24; st.a.mm = 0; st.a.lead = lead; }
     if (DialogBoxParamW(g_inst, MAKEINTRESOURCEW(IDD_ALARM), g_main, AlarmDlgProc, (LPARAM)&st) == IDOK) {
         st.a.next = -1; if (st.a.enabled) ComputeNext(st.a, NowMin());
         if (st.edit && idx < (int)g_alarms.size()) g_alarms[idx] = st.a; else if (g_alarms.size() < 50) g_alarms.push_back(st.a);
@@ -2177,6 +2276,8 @@ static void ShowPalette();
 static void SettingsWindow(int startPage);
 static void ConvertClipboard();
 
+static HMENU BuildToolsMenu(); static HMENU BuildShowMenu(); static void AddLookMenus(HMENU look); static void AddShareMenus(HMENU share);
+static bool HandleExtraCommand(int id); static void TranslateMenu(HMENU m);
 static HMENU BuildMenu() {
     HMENU m = CreatePopupMenu();
     auto chk = [](HMENU h, UINT id, const std::wstring& t, bool on, bool radio = false, bool gray = false) {
@@ -2257,6 +2358,8 @@ static HMENU BuildMenu() {
     AppendMenuW(cal, MF_STRING | (S.calUrl.empty() ? MF_GRAYED : 0), ID_CAL_OFF, L"Disconnect");
     if (!g_calError.empty() && S.calOn) AppendMenuW(cal, MF_STRING | MF_GRAYED, 0, (L"⚠ " + g_calError).c_str());
     AppendMenuW(m, MF_POPUP, (UINT_PTR)cal, L"Calendar");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)BuildToolsMenu(), L"Tools");
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)BuildShowMenu(), L"Show");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
 
     HMENU lay = CreatePopupMenu();
@@ -2288,6 +2391,7 @@ static HMENU BuildMenu() {
     HMENU wk = CreatePopupMenu();
     for (int i = 0; i < 5; i++) chk(wk, ID_WORK + i, Fmt(L"%02d:00 – %02d:00", kWork[i][0], kWork[i][1]), S.workStart == kWork[i][0] && S.workEnd == kWork[i][1], true);
     AppendMenuW(look, MF_POPUP, (UINT_PTR)wk, L"Default working hours");
+    AddLookMenus(look);
     AppendMenuW(m, MF_POPUP, (UINT_PTR)look, L"Appearance");
 
     HMENU pos = CreatePopupMenu();
@@ -2330,15 +2434,24 @@ static HMENU BuildMenu() {
     HMENU share = CreatePopupMenu();
     AppendMenuW(share, MF_STRING, ID_SHARE_EXPORT, L"Copy share code for these clocks");
     AppendMenuW(share, MF_STRING, ID_SHARE_IMPORT, L"Import a share code…");
-    AppendMenuW(m, MF_POPUP, (UINT_PTR)share, L"Share setup");
+    AddShareMenus(share);
+    AppendMenuW(m, MF_POPUP, (UINT_PTR)share, L"Share");
     if (g_shift) AppendMenuW(m, MF_STRING, ID_RESETSHIFT, (L"Back to now (shifted " + FmtShift() + L")").c_str());
     AppendMenuW(m, MF_STRING, ID_COPY, L"Copy all times");
     AppendMenuW(m, MF_STRING, ID_TOGGLEVIS, (std::wstring(S.visible ? L"Hide widget" : L"Show widget") + HotkeyTab(S.hkShow)).c_str());
+#ifdef STORE_BUILD
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Start with Windows: Windows Settings \u2192 Apps \u2192 Startup");
+#else
     chk(m, ID_STARTUP, L"Start with Windows", StartupEnabled());
+#endif
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     HMENU help = CreatePopupMenu();
+#ifdef STORE_BUILD
+    AppendMenuW(help, MF_STRING | MF_GRAYED, 0, L"Updates come from the Microsoft Store");
+#else
     chk(help, ID_UPD_TOGGLE, L"Check for updates when WinClock starts", S.updates);
     AppendMenuW(help, MF_STRING, ID_UPD_NOW, L"Check for updates now");
+#endif
     AppendMenuW(help, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(help, MF_STRING, ID_OPENINI, L"Open settings file");
     AppendMenuW(help, MF_STRING, ID_RELOAD, L"Reload settings");
@@ -2361,6 +2474,7 @@ static void ShowFlyoutAlways();
 
 static void HandleCommand(int id) {
     bool save = true, clocksChanged = false;
+    if (HandleExtraCommand(id)) return;
     if (id == ID_ADD) { ClockDialog(-1); ComputeDst(true); return; }
     if (id == ID_ALARM_ADD) { AlarmDialog(-1); return; }
     if (id == ID_JUMP) { JumpDialog(); return; }
@@ -2503,6 +2617,7 @@ static void ShowMenu() {
     POINT pt; GetCursorPos(&pt);
     TipHide(g_widget.tip); TipHide(g_flyout.tip); HidePeek();
     HMENU m = BuildMenu();
+    if (S.lang) TranslateMenu(m);
     SetForegroundWindow(g_main);
     int id = TrackPopupMenuEx(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, pt.x, pt.y, g_main, nullptr);
     PostMessageW(g_main, WM_NULL, 0, 0);
@@ -2513,6 +2628,8 @@ static void ShowMenu() {
 
 #include "palette.inc"
 #include "settingsui.inc"
+#include "features.inc"
+#include "i18n.inc"
 
 // ---------------------------------------------------------------- flyout
 static void ShowFlyoutImpl(bool toggle) {
@@ -2613,11 +2730,17 @@ static LRESULT CALLBACK ViewProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         if (wp == TM_TIP) {
             KillTimer(h, TM_TIP);
             if (v.hover >= 0 && v.hover < (int)g_clocks.size()) { Frame f = MakeFrame(); TipShow(v.tip, ClockTooltip(v.hover, f)); }
+            else if (v.hover <= -200 && v.hover > -210) TipShow(v.tip, L"Click to dismiss this answer card");
+            else if (v.hover == -300) TipShow(v.tip, g_focus.phase ? L"Click to pause or resume the focus timer" : L"Click to pause or resume the stopwatch");
             else if (v.hover <= -100 && -100 - v.hover < (int)g_pins.size()) TipShow(v.tip, PinTooltip(-100 - v.hover));
         }
         return 0;
     case WM_LBUTTONDOWN: {
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (v.hover <= -200 && v.hover > -210 && -200 - v.hover < (int)g_cards.size()) {   // dismiss an answer card
+            g_cards.erase(g_cards.begin() + (-200 - v.hover)); SaveCards(); v.hover = -1; TipHide(v.tip); RefreshAll(); return 0;
+        }
+        if (v.hover == -300) { TimerBarClick(); RefreshAll(); return 0; }
         if (PtInRect(&v.flashRc, pt)) {
             if (!g_flash.empty()) g_flash.clear();
             else if (g_conv.on) { CopyText(g_conv.line); g_conv.desc = L"copied \u2713 paste it anywhere"; }
@@ -2733,7 +2856,11 @@ static LRESULT CALLBACK BarProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 S.tbAnchor = 2;
                 S.tbOffset = b.horiz ? (int)((tw.right - (b.lastX + b.W)) / d) : (int)((tw.bottom - (b.lastY + b.H)) / d);
                 SaveSettings(); UpdateBar(true);
-            } else ShowFlyout();
+            } else {
+                POINT cp{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+                if (PtInRect(&b.timerRc, cp)) { TimerBarClick(); RefreshAll(); }
+                else ShowFlyout();
+            }
         }
         return 0;
     case WM_CAPTURECHANGED: b.down = false; b.dragging = false; return 0;
@@ -2817,7 +2944,7 @@ static LRESULT CALLBACK MainProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         } else if (wp == PBT_APMRESUMEAUTOMATIC || wp == PBT_APMRESUMESUSPEND) { g_bar.key = -1; RefreshAll(); AlarmTick(); }
         return TRUE;
     case WM_TIMECHANGE:
-        RefreshLocalZone(); for (auto& c : g_clocks) ResolveClock(c);
+        RefreshLocalZone(); CheckTravel(); for (auto& c : g_clocks) ResolveClock(c);
         for (auto& a : g_alarms) { a.next = -1; if (a.enabled) ComputeNext(a, NowMin()); }
         ComputeDst(true); g_calExpanded = -1; RefreshAll(); return 0;
     case WM_SETTINGCHANGE: case WM_DISPLAYCHANGE: case WM_DWMCOLORIZATIONCOLORCHANGED: case WM_SYSCOLORCHANGE:
@@ -2895,6 +3022,34 @@ static void RunPreviews() {
           G::SolidBrush pk{ G::Color(PINK) }; g.FillRectangle(&pk, 2.f, sz - sz / 12.f - 1.5f, std::max(1.f, (sz - 4) * t.st.wMinute / 60.f), sz / 12.f); }
         SavePng(sf, dir + L"v_trayicon.png"); FreeSurface(sf);
     }
+    // 2.5 panels: answer card, focus timer, markets, weather, map, custom theme, mini strip, languages
+    {
+        Settings keep2 = S; S.layout = L_LIST; S.theme = T_ELECTRIC;
+        g_cards = { { L"4:30 PM Tue  \u00b7  Germany", L"when it's 9:00 PM Tue in India  \u00b7  4 h 30 min behind India" } };
+        FocusStart(1); g_focus.endTick = GetTickCount64() + 18 * 60000 + 42000;
+        S.markets = L"NSE,NYSE,LSE,TSE"; S.showMap = true; S.weather = true;
+        long long nowm = NowMin(); int codes[] = { 0, 2, 61, 3, 0, 80 }; float temps[] = { 24, 14, 9, 31, 12, 22 };
+        for (size_t i = 0; i < g_clocks.size(); i++) { std::wstring k = WxKey(g_clocks[i]); if (!k.empty()) g_weather[k] = { temps[i % 6], codes[i % 6], nowm }; }
+        PaintView(g_widget); SavePng(g_widget.surf, dir + L"v_panels.png");
+        FocusStop(); g_sw.running = true; g_sw.startTick = GetTickCount64() - 83400; g_sw.laps = { 41200 };
+        S.showMap = false; S.markets.clear(); g_cards.clear();
+        S.theme = T_CUSTOM; PaintView(g_widget); SavePng(g_widget.surf, dir + L"v_custom.png");
+        S.theme = T_ELECTRIC; S.layout = L_STRIP; PaintView(g_widget); SavePng(g_widget.surf, dir + L"v_strip.png");
+        UpdateBar(true); SavePng(g_bar.surf, dir + L"v_taskbar_timer.png");
+        SwReset(); S.weather = false;
+        S.layout = L_LIST; S.lang = 2; ApplyLanguageFonts(); PaintView(g_widget); SavePng(g_widget.surf, dir + L"v_lang_de.png");
+        S.lang = 1; ApplyLanguageFonts(); PaintView(g_widget); SavePng(g_widget.surf, dir + L"v_lang_hi.png");
+        S.lang = 0; ApplyLanguageFonts();
+        CalcAnswer ca; std::wstring calc;
+        for (const wchar_t* qq : { L"9:00 pm in india, what time it would be in germany", L"9pm IST + 3h 45m", L"how long until 6pm london", L"hours between 9am ny and 5pm tokyo",
+                                   L"9am-5pm india in germany", L"9pm india to usa", L"now + 90 min" }) {
+            calc += std::wstring(L"> ") + qq + L"\r\n";
+            if (CalcQuery(qq, ca)) for (auto& r : ca.rows) calc += L"   " + r.title + L"   |   " + r.sub + L"\r\n"; else calc += L"   (no answer)\r\n";
+        }
+        WhenResult wm; ParseWhen(L"9pm IST thursday", wm); calc += L"\r\n" + TimeMessage(wm, {}) + L"\r\n\r\n" + WorkHoursStatus() + L"\r\n";
+        WriteTextFile(dir + L"v_calc.txt", calc);
+        S = keep2; ApplyWidgetStyle();
+    }
     WriteTextFile(dir + L"v_fairness.txt", FairnessReport());
     WriteTextFile(dir + L"v_dst.txt", DstReport());
     WriteTextFile(dir + L"v_card.txt", MeetingCard(L"Design review", NowMin() + 1440, 45));
@@ -2909,6 +3064,7 @@ static void RunPreviews() {
 #include "tests.inc"
 
 // ---------------------------------------------------------------- entry
+static void ApplyLanguageFonts();
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
     g_inst = inst;
     bool updated = cmdLine && wcsstr(cmdLine, L"/updated");
@@ -2929,8 +3085,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
     RefreshLocalZone();
     RefreshAccessibility();
     LoadSettings();
+    if (S.lang) ApplyLanguageFonts();
     LoadAlarms();
-    LoadPins(); PrunePins();
+    LoadPins(); PrunePins(); LoadCards();
 #ifdef TEST_BUILD
     g_clocks.clear(); RunTests(); return g_testFail;
 #endif
@@ -2972,8 +3129,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
 #else
     RefreshAll();
     UpdateTrayIconImage(true);
-    CalTick(); UpdateTick();
-    CleanupOldExe();
+    CalTick(); UpdateTick(); WeatherTick();
+    CleanupOldExe(); CheckTravel();
     if (updated) Balloon(L"WinClock is up to date", L"Updated to WinClock " APP_VERSION L". Your clocks and settings are kept.");
     ScheduleAlarmTimer();
     TrimMemory();

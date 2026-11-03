@@ -68,6 +68,40 @@ static void RunTests() {
     check(L"2026-11-20 14:00 UTC", L"UTC", 14, 0, 5);
     check(L"7:45pm sydney", L"AUS Eastern Standard Time", 19, 45, -1);
     { WhenResult w; Expect(!ParseWhen(L"we shipped 2026 builds", w), L"no time in \"we shipped 2026 builds\""); }
+    // --- markets
+    {
+        long long u; SYSTEMTIME lt{}; lt.wYear = 2026; lt.wMonth = 11; lt.wDay = 10; lt.wHour = 10; lt.wMinute = 0;   // Tue 10:00 IST
+        LocalToUtcMin(ZoneClock(L"India Standard Time"), lt, u); long long ch;
+        int st = MarketState(kMarkets[0], u, ch);
+        Expect(st == 1 && ch - u == 330, Fmt(L"NSE open at 10:00 IST, closes in 5h30 (%d, %lld)", st, ch - u));
+        st = MarketState(kMarkets[1], u, ch);   // NYSE at 23:30 Mon NY
+        Expect(st == 0 && ch - u == 600, Fmt(L"NYSE closed, opens in 10h (%d, %lld)", st, ch - u));
+        st = MarketState(kMarkets[5], u + 3 * 60 + 30 + 60 * 0, ch);   // 13:30 IST = 17:00 Tokyo: closed
+        Expect(st == 0, L"TSE closed at 17:00 Tokyo");
+        long long u2; SYSTEMTIME tk{}; tk.wYear = 2026; tk.wMonth = 11; tk.wDay = 10; tk.wHour = 12; tk.wMinute = 0; LocalToUtcMin(ZoneClock(L"Tokyo Standard Time"), tk, u2);
+        st = MarketState(kMarkets[5], u2, ch);
+        Expect(st == 2 && ch - u2 == 30, Fmt(L"TSE lunch at 12:00, reopens in 30 min (%d, %lld)", st, ch - u2));
+        SYSTEMTIME sat{}; sat.wYear = 2026; sat.wMonth = 11; sat.wDay = 14; sat.wHour = 11; long long u3; LocalToUtcMin(ZoneClock(L"India Standard Time"), sat, u3);
+        st = MarketState(kMarkets[0], u3, ch);
+        Expect(st == 0, L"NSE closed on Saturday");
+    }
+    // --- moon & prayer times
+    {
+        long long full; SYSTEMTIME f{}; f.wYear = 2026; f.wMonth = 11; f.wDay = 24; f.wHour = 15; FILETIME ft; SystemTimeToFileTime(&f, &ft); full = (long long)(FtU(ft) / TPM);
+        std::wstring m = MoonText(full);
+        Expect(m.find(L"Full moon") == 0, L"moon on 24 Nov 2026 is full: " + m);
+        double p[6]; PrayerTimesUtc(2026, 6, 21, 21.42, 39.83, 3, false, p);   // Makkah, Umm al-Qura
+        auto hm = [](double m2) { int x = (int)llround(m2) + 180; x = ((x % 1440) + 1440) % 1440; return Fmt(L"%02d:%02d", x / 60, x % 60); };   // local = UTC+3
+        Expect(std::fabs(p[2] + 180 - (12 * 60 + 22)) <= 4, L"Makkah Dhuhr ~12:22 on 21 Jun: " + hm(p[2]));
+        Expect(std::fabs(p[0] + 180 - (4 * 60 + 8)) <= 6, L"Makkah Fajr ~04:08 on 21 Jun: " + hm(p[0]));
+        Expect(std::fabs(p[4] + 180 - (19 * 60 + 7)) <= 4, L"Makkah Maghrib ~19:07 on 21 Jun: " + hm(p[4]));
+    }
+    // --- leave-by reminders fire before the event
+    {
+        Alarm a; a.label = L"Flight"; a.tzid = L"W. Europe Standard Time"; a.hh = 6; a.mm = 40; a.y = 2030; a.mo = 1; a.d = 10; a.lead = 180;
+        ComputeNext(a, NowMin());
+        Expect(a.next > 0 && a.next - a.lead < a.next, L"leave-by: reminder 3 h before the flight");
+    }
     // --- time calculator
     {
         auto calc = [](const wchar_t* q, CalcAnswer& a) { a = CalcAnswer{}; return TimeCalc(q, a); };
@@ -91,6 +125,30 @@ static void RunTests() {
         ok = calc(L"9pm, what time would it be in japan", a);
         Expect(ok && a.rows.size() == 1 && first(a).find(L"Japan") != std::wstring::npos, L"calc: 9pm (your time) -> Japan: " + first(a));
         Expect(!calc(L"3pm tokyo", a), L"calc: a single place stays a normal conversion");
+        // durations, until, between, ranges
+        auto q = [](const wchar_t* text, CalcAnswer& r) { return CalcQuery(text, r); };
+        ok = q(L"9pm IST + 3h 45m nov 10 2026", a);
+        Expect(ok && first(a).find(L"12:45 AM") == 0 && first(a).find(L"next day") != std::wstring::npos, L"calc: 9pm IST + 3h 45m = 12:45 AM next day: " + first(a));
+        ok = q(L"10:30am london - 90 min nov 10 2026", a);
+        Expect(ok && first(a).find(L"9:00 AM") == 0, L"calc: 10:30am London - 90 min = 9:00 AM: " + first(a));
+        ok = q(L"hours between 9am ny and 5pm tokyo nov 10 2026", a);
+        Expect(ok && first(a) == L"18 h", L"calc: 9am NY -> 5pm Tokyo = 18 h: " + first(a) + L" / " + (a.rows.empty() ? L"" : a.rows[0].sub));
+        ok = q(L"how long until 6pm london", a);
+        Expect(ok && first(a).find(L"to go") != std::wstring::npos, L"calc: how long until 6pm London: " + first(a));
+        ok = q(L"9am-5pm india in germany nov 10 2026", a);
+        Expect(ok && first(a).find(L"4:30 AM – 12:30 PM") == 0 && a.rows[0].sub.find(L"9:00 AM–12:30 PM") != std::wstring::npos,
+               L"calc: 9am-5pm India in Germany = 4:30 AM–12:30 PM, overlap 9–12:30: " + first(a) + L" | " + (a.rows.empty() ? L"" : a.rows[0].sub));
+        ok = q(L"now + 2h in tokyo", a);
+        Expect(ok && first(a).find(L"Tokyo") != std::wstring::npos, L"calc: now + 2h in tokyo: " + first(a));
+        ok = q(L"9pm india to germany nov 10 2026", a);
+        Expect(ok && a.rows.size() == 1 && first(a).find(L"4:30 PM") == 0, L"calc: plain conversion still works through CalcQuery: " + first(a));
+        Expect(!q(L"3pm tokyo", a), L"calc: single place still falls back");
+        // sharing text
+        { WhenResult w; w.zone.clock = ZoneClock(L"India Standard Time"); w.zone.name = L"India"; w.hasTime = true;
+          SYSTEMTIME lt{}; lt.wYear = 2026; lt.wMonth = 11; lt.wDay = 10; lt.wHour = 21; LocalToUtcMin(w.zone.clock, lt, w.utc);
+          PlaceHit ph; ph.place = L"Germany"; WhenZone gz; gz.clock = ZoneClock(L"W. Europe Standard Time"); gz.name = L"Germany"; ph.zones = { gz };
+          std::wstring m = TimeMessage(w, { ph });
+          Expect(m.find(L"9:00 PM Tue 10 Nov (India)") != std::wstring::npos && m.find(L"Germany — 4:30 PM Tue") != std::wstring::npos, L"share message: " + m); }
         { WhenResult w; bool ok2 = ParseWhen(L"9:00 pm in india, what time it would be in germany", w);
           Expect(ok2 && w.zone.name.find(L"India") != std::wstring::npos, L"clipboard converter reads India as the source: " + w.zone.name); }
         ok = calc(L"9 pm IST to CET nov 10 2026", a);

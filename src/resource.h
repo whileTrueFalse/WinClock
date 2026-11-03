@@ -86,3 +86,4 @@
 #define IDC_SG_HKPAL  1167
 #define IDC_SG_HKCONV 1168
 #define IDC_SG_HKSHOW 1169
+#define IDC_ALEAD     1170

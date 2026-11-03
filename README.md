@@ -23,6 +23,9 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 | Add cities or teammates | Menu → **Add clocks / countries…**, or **Settings → Clocks & people** |
 | Do anything quickly | **Ctrl + Alt + K** opens the command palette (try `3pm est thu`, `add Tokyo`, `theme paper`) |
 | Convert between places | Press **Ctrl + Alt + K** and type e.g. `9pm in india, what time in germany` or `3pm london to tokyo` |
+| Do time maths | `9pm IST + 3h 45m`, `how long until 6pm london`, `hours between 9am ny and 5pm tokyo`, `9am-5pm india in germany` |
+| Focus, stopwatch, reminders | Menu → **Tools** (or type `focus`, `stopwatch`, `remind flight 6:40am frankfurt 3h before`) |
+| Map, markets, weather | Menu → **Show** |
 | Convert a time you copied | Copy text like "Tue 3pm PST", then press **Ctrl + Alt + V** |
 | Plan a meeting | Scroll over the clocks to move time, or Menu → **Plan** for the fairness check and meeting card |
 | Move the taskbar clocks | Menu → **Taskbar → Position** (left, right or drag) |
@@ -51,6 +54,16 @@ To uninstall, go to **Settings → Apps → WinClock → Uninstall**.
 - Fairness check: finds the slot that's least painful for everyone over the next 4 weeks
 - Pin important moments with a countdown
 - Daylight-saving warnings before clocks change
+
+**New in 2.5**
+- Time maths in the calculator: durations, countdowns and working-hours overlap; ↑ brings back your last questions
+- Pin an answer to the widget as a card; copy any time as a message for WhatsApp, Slack or email
+- Focus timer (pomodoro) and stopwatch, shown live on the taskbar
+- Leave-by reminders: "alert me 3 h before my 6:40 AM Frankfurt flight"
+- Day/night world map, stock-market hours (NSE, NYSE, LSE, Tokyo and more), optional weather, moon phase and prayer times
+- Travel mode: when your PC's time zone changes, keep a "Home" clock in one click
+- Mini one-line strip, size presets, your own theme colours (or your Windows accent), and English / हिन्दी / Deutsch / Español
+- Speak instead of typing: click the mic in the command palette (Windows voice typing)
 
 **More**
 - Next meeting from your calendar (.ics link) with a join reminder (off by default)
@@ -87,4 +100,4 @@ Holiday dates for lunar and Islamic holidays are approximate. You can add or cor
 
 Releases are automatic: raise the number in `VERSION` and push to `main`. GitHub then builds the app and installer and publishes a new release.
 
-Each release also includes ready-made [winget](https://learn.microsoft.com/windows/package-manager/) manifests. To publish to winget, submit them as a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
+Each release also includes **WinClock-Store.msix** for the Microsoft Store; see [docs/STORE.md](docs/STORE.md). It also includes ready-made [winget](https://learn.microsoft.com/windows/package-manager/) manifests. To publish to winget, submit them as a pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).

@@ -1,7 +1,24 @@
 // ---------------------------------------------------------------- command palette (Ctrl+Alt+K by default)
 // Type "tokyo", "add berlin", "3pm ny thu", "meeting", "theme paper"... Enter runs the highlighted line.
-struct PalItem { std::wstring title, sub; std::function<void()> run; bool keepOpen = false; bool copied = false; };
+struct PalItem { std::wstring title, sub; std::function<void()> run; bool keepOpen = false; bool copied = false; bool record = false; };
 static HWND g_pal = nullptr, g_palEdit = nullptr;
+static std::vector<std::wstring> g_palHist; static int g_palHistPos = -1; static bool g_palSetting = false; static std::wstring g_palQuery;
+static ULONGLONG g_palVoiceUntil = 0;
+static void HistLoad() {
+    g_palHist.clear();
+    for (int i = 1; i <= 10; i++) { std::wstring v = IniStr(L"PaletteHistory", (L"Q" + std::to_wstring(i)).c_str(), L""); if (!v.empty()) g_palHist.push_back(v); }
+}
+static void HistAdd(const std::wstring& q) {
+    if (q.empty()) return;
+    HistLoad();
+    g_palHist.erase(std::remove(g_palHist.begin(), g_palHist.end(), q), g_palHist.end());
+    g_palHist.insert(g_palHist.begin(), q); if (g_palHist.size() > 10) g_palHist.resize(10);
+    WritePrivateProfileSectionW(L"PaletteHistory", L"", g_ini.c_str());
+    for (size_t i = 0; i < g_palHist.size(); i++) IniPut(L"PaletteHistory", (L"Q" + std::to_wstring(i + 1)).c_str(), g_palHist[i]);
+}
+static void PalSetText(const std::wstring& tx) {
+    g_palSetting = true; SetWindowTextW(g_palEdit, tx.c_str()); SendMessageW(g_palEdit, EM_SETSEL, tx.size(), tx.size()); g_palSetting = false;
+}
 static std::vector<PalItem> g_palItems; static int g_palSel = 0;
 static HFONT g_palFont = nullptr; static HBRUSH g_palBrush = nullptr;
 static std::vector<ZoneEntry> g_palZones;
@@ -28,12 +45,17 @@ static void PalBuild(const std::wstring& raw) {
     g_palItems.clear(); g_palSel = 0;
     std::wstring q = raw; while (!q.empty() && iswspace(q.back())) q.pop_back(); while (!q.empty() && iswspace(q.front())) q.erase(q.begin());
     std::wstring t = Lower(q);
+    g_palQuery = q;
     auto add = [&](std::wstring title, std::wstring sub, std::function<void()> fn, bool keep = false) {
         if (g_palItems.size() < 9) g_palItems.push_back({ title, sub, fn, keep });
     };
     auto hint = [&](const wchar_t* text, const wchar_t* sub) { std::wstring tx = text; add(tx, sub, [tx]() { SetWindowTextW(g_palEdit, tx.c_str()); SendMessageW(g_palEdit, EM_SETSEL, tx.size(), tx.size()); }, true); };
     if (t.empty()) {
+        HistLoad();
+        for (size_t i = 0; i < g_palHist.size() && i < 3; i++) { std::wstring hq = g_palHist[i]; add(L"\u21ba  " + hq, L"recent \u00b7 \u2191 brings back older ones", [hq]() { PalSetText(hq); }, true); }
         hint(L"9pm india to germany", L"time calculator: any time, any two places");
+        if (g_palHist.empty()) hint(L"9am-5pm india in germany", L"a window, with their working-hours overlap");
+        if (g_palHist.empty()) hint(L"how long until 6pm london", L"countdowns, \"+ 3h 45m\", \"hours between 9am ny and 5pm tokyo\"");
         hint(L"3pm ny thu", L"convert a time into every clock");
         hint(L"add berlin", L"add a city (or a whole country: add australia)");
         hint(L"tokyo", L"what time is it there?");
@@ -94,17 +116,85 @@ static void PalBuild(const std::wstring& raw) {
         { L"alarm", L"Add alarm or countdown…", 230 }, { L"countdown", L"Add alarm or countdown…", 230 }, { L"calendar", L"Connect calendar link…", 249 },
         { L"update", L"Check for updates now", 254 }, { L"hide", L"Hide / show widget", 182 }, { L"show", L"Hide / show widget", 182 },
         { L"convert", L"Convert time from clipboard", 240 }, { L"paste", L"Convert time from clipboard", 240 }, { L"profile", L"New profile…", 256 },
+        { L"focus", L"Start a focus session (pomodoro)", 3000 }, { L"pomodoro", L"Start a focus session (pomodoro)", 3000 }, { L"break", L"Start a break", 3001 },
+        { L"stopwatch", L"Start / pause the stopwatch", 3020 }, { L"lap", L"Stopwatch lap", 3021 }, { L"leave", L"Leave-by reminder…", 3024 },
+        { L"map", L"Day/night world map (on/off)", 3030 }, { L"weather", L"Weather next to each city (on/off)", 3031 }, { L"prayer", L"Prayer times in tooltips (on/off)", 3034 },
+        { L"message", L"Copy the time as a message for everyone", 3050 }, { L"status", L"Copy my working hours for Slack / Teams", 3051 },
+        { L"slack", L"Copy my working hours for Slack / Teams", 3051 }, { L"teams", L"Copy my working hours for Slack / Teams", 3051 },
+        { L"mini", L"Mini strip size", 3070 }, { L"small", L"Small size", 3071 }, { L"medium", L"Medium size", 3072 }, { L"large", L"Large size", 3073 },
+        { L"accent", L"Use my Windows accent colour", 3064 }, { L"colours", L"Custom theme colours: background…", 3060 }, { L"colors", L"Custom theme colours: background…", 3060 },
     };
     for (auto& k : kws) if (wcslen(k.w) >= t.size() ? wcsncmp(k.w, t.c_str(), t.size()) == 0 && t.size() >= 2 : false) { int cmd = k.cmd; add(k.title, L"command", [cmd]() { HandleCommand(cmd); }); }
+    // markets: "markets", "nse", "nyse"
+    if (t == L"markets" || t == L"market" || t == L"stocks") {
+        long long u = NowMin();
+        for (int i = 0; i < kMarketCount && g_palItems.size() < 9; i++) {
+            long long ch; int st = MarketState(kMarkets[i], u, ch); int idx = i;
+            add(std::wstring(kMarkets[i].name) + (st == 1 ? L"  \u25cf open" : st == 2 ? L"  lunch break" : L"  closed"),
+                (st == 1 ? L"closes in " : L"opens in ") + (ch >= 0 ? FmtSpan(ch - u) : std::wstring(L"?")) + (MarketOn(i) ? L"  \u00b7 on the widget (Enter hides)" : L"  \u00b7 Enter shows it on the widget"),
+                [idx]() { MarketToggle(idx); SaveSettings(); RefreshAll(); });
+        }
+        return;
+    }
+    for (int i = 0; i < kMarketCount; i++) if (t == Lower(kMarkets[i].key)) {
+        long long u = NowMin(), ch; int st = MarketState(kMarkets[i], u, ch); int idx = i;
+        add(std::wstring(kMarkets[i].name) + (st == 1 ? L" is open" : st == 2 ? L" is on its lunch break" : L" is closed"),
+            (st == 1 ? L"closes in " : L"opens in ") + (ch >= 0 ? FmtSpan(ch - u) : std::wstring(L"?")) + L"  \u00b7 Enter toggles it on the widget",
+            [idx]() { MarketToggle(idx); SaveSettings(); RefreshAll(); });
+    }
+    // "remind flight 6:40am frankfurt 3h before" -> a leave-by reminder
+    if (t.compare(0, 7, L"remind ") == 0 || t.compare(0, 9, L"leave by ") == 0) {
+        std::wstring rest = q.substr(t[0] == L'r' ? 7 : 9);
+        std::wstring cl = CleanWhenText(rest); int lead = 0; bool hasLead = TakeDuration(cl, lead);
+        WhenResult w;
+        if (ParseWhenT(cl, nullptr, w, nullptr) && w.hasTime) {
+            if (!hasLead) lead = 0; lead = std::abs(lead);
+            std::wstring label = rest; size_t cut = label.find_first_of(L"0123456789"); if (cut != std::wstring::npos) label = label.substr(0, cut);
+            if (label.compare(0, 3, L"me ") == 0) label = label.substr(3);
+            while (!label.empty() && (label.back() == L' ' || label.back() == L'a' && label.size() > 2 && label[label.size() - 2] == L' ')) label.pop_back();
+            for (const wchar_t* w2 : { L" at", L" on", L" for" }) { size_t n = wcslen(w2); if (label.size() > n && label.compare(label.size() - n, n, w2) == 0) label.resize(label.size() - n); }
+            if (label.empty()) label = L"Reminder";
+            label[0] = towupper(label[0]);
+            SYSTEMTIME zt = ZoneTime(w.zone, w.utc);
+            CTime lt = ClockAt(g_localClock, (ULONGLONG)(w.utc - lead) * TPM);
+            std::wstring tz = w.zone.clock.kind == 1 ? std::wstring(L"Local") : w.zone.clock.tzid;
+            if (w.zone.fixedOff == INT_MIN && !tz.empty()) {
+                long long eu = w.utc;
+                add(L"Remind me" + (lead ? L" " + DurWords(lead) + L" before" : std::wstring()) + L": " + label + L" at " + FmtHMFull(zt) + L" " + kDays[zt.wDayOfWeek] + L" " + w.zone.name,
+                    L"alert at " + FmtHMFull(lt.st) + L" " + kDays[lt.st.wDayOfWeek] + L" your time  \u00b7  Enter adds it",
+                    [label, tz, zt, lead, eu]() {
+                        Alarm a; a.label = label; a.tzid = tz; a.hh = zt.wHour; a.mm = zt.wMinute; a.y = zt.wYear; a.mo = zt.wMonth; a.d = zt.wDay; a.lead = lead;
+                        ComputeNext(a, NowMin()); if (a.next < 0) a.next = eu;
+                        if (g_alarms.size() < 50) g_alarms.push_back(a);
+                        SaveAlarms(); RefreshAll(); Balloon(L"Reminder set", label + L" \u00b7 alert " + (lead ? DurWords(lead) + L" before" : std::wstring(L"at the time")));
+                    });
+                return;
+            }
+        }
+        hint(L"remind flight 6:40am frankfurt 3h before", L"type: what, when, where, and how long before");
+        return;
+    }
     // time calculator: a time and two or more places ("9pm in india, what time in germany")
     CalcAnswer ca;
-    bool calc = TimeCalc(q, ca);
+    bool calc = CalcQuery(q, ca);
     if (calc) {
         // Enter copies and keeps the answer on screen (with a tick) so it's clear it worked
-        for (auto& r : ca.rows) { std::wstring c1 = r.copy; if (g_palItems.size() < 7) add(r.title, r.sub + L"  ·  Enter copies", [c1]() { CopyText(c1); }, true); }
-        if (ca.rows.size() > 1) { std::wstring copy = ca.copy; add(L"Copy all of these", L"one line per place", [copy]() { CopyText(copy); }, true); }
+        for (auto& r : ca.rows) { std::wstring c1 = r.copy; if (g_palItems.size() < 5) { add(r.title, r.sub + L"  ·  Enter copies", [c1]() { CopyText(c1); }, true); g_palItems.back().record = true; } }
+        if (ca.rows.size() > 1) { std::wstring copy = ca.copy; add(L"Copy all of these", L"one line per place", [copy]() { CopyText(copy); }, true); g_palItems.back().record = true; }
+        {
+            std::wstring ct = ca.rows[0].title, cs = ca.rows[0].sub;
+            if (ca.rows.size() > 1) { cs.clear(); for (size_t k = 1; k < ca.rows.size() && k < 4; k++) cs += (k > 1 ? L"  ·  " : L"") + ca.rows[k].title; }
+            add(L"Pin this answer to the widget", L"keeps it on screen until you click it away", [ct, cs]() { PinCard(ct, cs); RefreshAll(); });
+            g_palItems.back().record = true;
+            if (ca.when.hasTime) {
+                WhenResult mw = ca.when; std::vector<PlaceHit> tg = ca.targets;
+                add(L"Copy as a message for everyone", L"that time in every place, ready for WhatsApp, Slack or email", [mw, tg]() { CopyText(TimeMessage(mw, tg)); }, true);
+                g_palItems.back().record = true;
+            }
+        }
         WhenResult cw = ca.when;
         add(L"Show this moment on all my clocks", L"moves the widget to that time; middle-click it to come back", [cw]() { ConvertTo(cw); });
+        g_palItems.back().record = true;
     }
     // a time expression
     WhenResult w;
@@ -137,20 +227,41 @@ static void PalRun(int i) {
     if (i < 0 || i >= (int)g_palItems.size()) return;
     PalItem it = g_palItems[i];
     if (!it.run) return;
+    if (it.record) HistAdd(g_palQuery);
     if (it.keepOpen) {
         it.run();
         if (i < (int)g_palItems.size() && g_palItems[i].sub.find(L"Enter copies") != std::wstring::npos) {
             std::wstring& sub = g_palItems[i].sub; sub.replace(sub.find(L"Enter copies"), 12, L"\u2713 copied to clipboard");
             g_palItems[i].copied = true; InvalidateRect(g_pal, nullptr, FALSE);
+        } else if (i < (int)g_palItems.size() && g_palItems[i].title.compare(0, 4, L"Copy") == 0) {
+            g_palItems[i].sub = L"\u2713 copied to clipboard"; g_palItems[i].copied = true; InvalidateRect(g_pal, nullptr, FALSE);
         }
         return;
     }
     PalClose(); it.run();
 }
 static WNDPROC g_palEditOld = nullptr;
+// Windows voice typing (Win+H) types straight into the box; we keep the palette open while it listens
+static void PalVoice() {
+    if (!g_pal) return;
+    SetForegroundWindow(g_pal); SetFocus(g_palEdit);
+    g_palVoiceUntil = GetTickCount64() + 30000;
+    INPUT in[4] = {};
+    for (auto& x : in) x.type = INPUT_KEYBOARD;
+    in[0].ki.wVk = VK_LWIN; in[1].ki.wVk = 'H'; in[2].ki.wVk = 'H'; in[2].ki.dwFlags = KEYEVENTF_KEYUP; in[3].ki.wVk = VK_LWIN; in[3].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(4, in, sizeof(INPUT));
+    InvalidateRect(g_pal, nullptr, FALSE);
+}
 static LRESULT CALLBACK PalEditProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     if (m == WM_KEYDOWN) {
         if (wp == VK_DOWN || wp == VK_UP) {
+            bool histMode = g_palHistPos >= 0 || (wp == VK_UP && GetWindowTextLengthW(h) == 0);
+            if (histMode) {
+                HistLoad();
+                if (wp == VK_UP && g_palHistPos + 1 < (int)g_palHist.size()) { g_palHistPos++; PalSetText(g_palHist[g_palHistPos]); return 0; }
+                if (wp == VK_DOWN) { g_palHistPos--; PalSetText(g_palHistPos >= 0 ? g_palHist[g_palHistPos] : L""); return 0; }
+                if (wp == VK_UP) return 0;
+            }
             int n = (int)g_palItems.size(); if (n) { g_palSel = (g_palSel + (wp == VK_DOWN ? 1 : n - 1)) % n; InvalidateRect(g_pal, nullptr, FALSE); }
             return 0;
         }
@@ -166,12 +277,13 @@ static void PalLayout() {
     int W = (int)(640 * s), H = (int)((60 + rows * 40 + 10) * s);
     RECT r; GetWindowRect(g_pal, &r);
     SetWindowPos(g_pal, nullptr, r.left, r.top, W, H, SWP_NOZORDER | SWP_NOACTIVATE);
-    SetWindowPos(g_palEdit, nullptr, (int)(46 * s), (int)(17 * s), W - (int)(64 * s), (int)(28 * s), SWP_NOZORDER | SWP_NOACTIVATE);
+    SetWindowPos(g_palEdit, nullptr, (int)(46 * s), (int)(17 * s), W - (int)(100 * s), (int)(28 * s), SWP_NOZORDER | SWP_NOACTIVATE);
 }
 static LRESULT CALLBACK PalProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_COMMAND:
         if ((HWND)lp == g_palEdit && HIWORD(wp) == EN_CHANGE) {
+            if (!g_palSetting) g_palHistPos = -1;
             int n = GetWindowTextLengthW(g_palEdit); std::wstring q(n + 1, L'\0'); GetWindowTextW(g_palEdit, &q[0], n + 1); q.resize(n);
             PalBuild(q); PalLayout(); InvalidateRect(h, nullptr, FALSE);
         }
@@ -191,6 +303,13 @@ static LRESULT CALLBACK PalProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
             G::Pen bp{ G::Color(th.border), 1 }; g.DrawRectangle(&bp, 0.5f, 0.5f, W - 1.f, H - 1.f);
             DT(g, L"›", F(FMS, 22 * s), 18 * s, 39 * s, th.accent, AL);
             G::Pen sp{ G::Color(th.border), 1 }; g.DrawLine(&sp, 0.f, 58 * s, (float)W, 58 * s);
+            {   // microphone: speak instead of typing (Windows voice typing)
+                float mx = W - 30 * s, my = 30 * s; bool on = GetTickCount64() < g_palVoiceUntil;
+                DWORD mc = on ? th.accent : th.dim;
+                FillRR(g, mx - 4.5f * s, my - 10 * s, 9 * s, 14 * s, 4.5f * s, mc);
+                G::Pen mp{ G::Color(mc), 1.6f * s }; g.DrawArc(&mp, mx - 7.5f * s, my - 6 * s, 15 * s, 13 * s, 0, 180);
+                g.DrawLine(&mp, mx, my + 7 * s, mx, my + 11 * s);
+            }
             for (size_t i = 0; i < g_palItems.size(); i++) {
                 float y = (62 + 40 * i) * s;
                 if ((int)i == g_palSel) { G::SolidBrush hb{ G::Color(th.hover) }; g.FillRectangle(&hb, 6 * s, y, W - 12 * s, 38 * s);
@@ -211,10 +330,12 @@ static LRESULT CALLBACK PalProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     }
     case WM_LBUTTONUP: {
         float s = PalScale(); int y = GET_Y_LPARAM(lp), i = (int)((y / s - 62) / 40);
+        RECT rc; GetClientRect(h, &rc);
+        if (y / s < 58 && GET_X_LPARAM(lp) > rc.right - 50 * s) { PalVoice(); return 0; }
         if (y / s >= 62 && i >= 0 && i < (int)g_palItems.size()) PalRun(i);
         return 0;
     }
-    case WM_ACTIVATE: if (LOWORD(wp) == WA_INACTIVE && g_pal == h) PostMessageW(h, WM_CLOSE, 0, 0); return 0;
+    case WM_ACTIVATE: if (LOWORD(wp) == WA_INACTIVE && g_pal == h && GetTickCount64() > g_palVoiceUntil) PostMessageW(h, WM_CLOSE, 0, 0); return 0;
     case WM_CLOSE: if (g_pal == h) PalClose(); else DestroyWindow(h); return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
