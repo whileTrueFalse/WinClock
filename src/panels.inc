@@ -369,16 +369,26 @@ static void DrawPanels(Ctx& c, float y) {   // y = top of the area, scaled
         float sx = x0 + (float)((sunLon + 180) / 360 * mw), sy = y + (float)((76 - sunLat) / 132 * mh);
         { G::SolidBrush sb{ G::Color(A(th.accent, 0x50)) }; g.FillEllipse(&sb, sx - 7 * s, sy - 7 * s, 14 * s, 14 * s);
           G::SolidBrush sb2{ G::Color(th.accent) }; g.FillEllipse(&sb2, sx - 3.5f * s, sy - 3.5f * s, 7 * s, 7 * s); }
-        // your clocks
+        // your clocks (labels dodge each other: right, left, below, above)
+        std::vector<G::RectF> used;
         for (size_t i = 0; i < g_clocks.size(); i++) {
             const Clock& ck = g_clocks[i]; if (std::isnan(ck.lat)) continue;
             float px = x0 + (float)((ck.lon + 180) / 360 * mw), py = y + (float)((76 - ck.lat) / 132 * mh);
             if (py < y || py > y + mh) continue;
             G::SolidBrush pb{ G::Color(th.fg) }; g.FillEllipse(&pb, px - 3 * s, py - 3 * s, 6 * s, 6 * s);
             G::Pen pp{ G::Color(th.bg | 0xFF000000), 1.2f * s }; g.DrawEllipse(&pp, px - 3 * s, py - 3 * s, 6 * s, 6 * s);
-            std::wstring lab = ck.label; FontE* fl = F(FS, 10.5f * s); float lw = TW(g, lab, fl);
-            float lx = px + 6 * s; int al = AL; if (lx + lw > x1) { lx = px - 6 * s; al = AR; }
-            DT(g, lab, fl, lx, py + 4 * s, th.fg, al, 0, true);
+            std::wstring lab = ck.label; FontE* fl = F(FS, 10.5f * s); float lw = TW(g, lab, fl), lh = 13 * s;
+            struct Opt { float x, base; } opts[] = { { px + 6 * s, py + 4 * s }, { px - 6 * s - lw, py + 4 * s }, { px - lw / 2, py + 16 * s }, { px - lw / 2, py - 7 * s } };
+            Opt pick = opts[0]; bool found = false;
+            for (auto& o : opts) {
+                if (o.x < x0 || o.x + lw > x1) continue;
+                G::RectF rr(o.x - 2 * s, o.base - lh + 2 * s, lw + 4 * s, lh);
+                bool clash = false; for (auto& u2 : used) if (rr.IntersectsWith(u2)) { clash = true; break; }
+                if (!clash) { pick = o; found = true; break; }
+            }
+            if (!found && pick.x + lw > x1) pick.x = px - 6 * s - lw;
+            used.push_back(G::RectF(pick.x - 2 * s, pick.base - lh + 2 * s, lw + 4 * s, lh));
+            DT(g, lab, fl, pick.x, pick.base, th.fg, AL, 0, true);
             c.v.hits.push_back({ { (LONG)(px - 6 * s), (LONG)(py - 6 * s), (LONG)(px + 6 * s), (LONG)(py + 6 * s) }, (int)i });
         }
         y += mh;
