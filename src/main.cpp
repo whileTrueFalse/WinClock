@@ -170,6 +170,7 @@ struct View {
     long long key = -1; bool tracking = false;
     Tip tip; RECT flashRc{};
     BYTE animAlpha = 255; DWORD animStart = 0; int animX = 0, animY = 0, animDX = 0, animDY = 0;
+    bool dragging = false, moved = false; POINT dragPt{}; RECT dragRc{};   // our own drag (free movement in any direction)
 };
 
 struct Bar {
@@ -1078,7 +1079,7 @@ static void Present(HWND hwnd, Surface& s, BYTE alpha, POINT* pos) {
 }
 // when the widget grows (map, markets, cards), slide it back inside the screen instead of running off the edge
 static void KeepOnScreen(HWND h) {
-    if (!h || !IsWindowVisible(h)) return;
+    if (!h || !IsWindowVisible(h) || g_widget.dragging) return;
     RECT r; GetWindowRect(h, &r);
     MONITORINFO mi{ sizeof(mi) }; GetMonitorInfoW(MonitorFromRect(&r, MONITOR_DEFAULTTONEAREST), &mi);
     RECT wa = mi.rcWork; int x = r.left, y = r.top, w = r.right - r.left, hh = r.bottom - r.top;
@@ -2760,6 +2761,20 @@ static LRESULT CALLBACK ViewProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     View& v = *vp;
     switch (m) {
     case WM_MOUSEMOVE:
+        if (v.dragging) {
+            POINT p; GetCursorPos(&p);
+            int dx = p.x - v.dragPt.x, dy = p.y - v.dragPt.y;
+            if (!v.moved && std::abs(dx) + std::abs(dy) < 4) return 0;
+            v.moved = true;
+            int w = v.dragRc.right - v.dragRc.left, hh = v.dragRc.bottom - v.dragRc.top;
+            RECT r{ v.dragRc.left + dx, v.dragRc.top + dy, v.dragRc.right + dx, v.dragRc.bottom + dy };
+            MONITORINFO mi{ sizeof(mi) }; GetMonitorInfoW(MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST), &mi);
+            int snap = (int)(14 * DpiOf(h) / 96); RECT wa = mi.rcWork;   // snap to the work-area edges
+            if (std::abs(r.left - wa.left) < snap) r.left = wa.left; else if (std::abs(r.left + w - wa.right) < snap) r.left = wa.right - w;
+            if (std::abs(r.top - wa.top) < snap) r.top = wa.top; else if (std::abs(r.top + hh - wa.bottom) < snap) r.top = wa.bottom - hh;
+            SetWindowPos(h, nullptr, r.left, r.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            return 0;
+        }
         if (!v.tracking) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, h, 0 }; TrackMouseEvent(&t); v.tracking = true; }
         ViewHover(v, GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         return 0;
@@ -2797,7 +2812,18 @@ static LRESULT CALLBACK ViewProc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         }
     }
         TipHide(v.tip);
-        if (!v.fly && !S.locked) { ReleaseCapture(); SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0); }
+        if (!v.fly && !S.locked) {   // start dragging: we move the window ourselves so it goes anywhere
+            v.dragging = true; v.moved = false; GetCursorPos(&v.dragPt); GetWindowRect(h, &v.dragRc); SetCapture(h);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (v.dragging) {
+            v.dragging = false; ReleaseCapture();
+            if (v.moved) { RECT r; GetWindowRect(h, &r); S.x = r.left; S.y = r.top; SaveSettings(); KeepOnScreen(h); }
+        }
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (v.dragging && (HWND)lp != h) { v.dragging = false; if (v.moved) { RECT r; GetWindowRect(h, &r); S.x = r.left; S.y = r.top; SaveSettings(); } }
         return 0;
     case WM_MBUTTONUP:
         if (g_shift) { g_shift = 0; g_conv.on = false; RefreshAll(); }
