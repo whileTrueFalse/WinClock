@@ -351,7 +351,7 @@ static void OfferUpdate() {
         (L"WinClock " + g_updTag + L" is available. You have " APP_VERSION L".\n\n"
          L"Update now? It downloads in a few seconds and WinClock restarts by itself. Your clocks and settings are kept.\n\n"
          L"Yes: update now     No: later     Cancel: see what's new").c_str(),
-        L"WinClock update", MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        L"WinClock update", MB_YESNOCANCEL | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
     if (r == IDCANCEL) { ShellExecuteW(nullptr, L"open", (L"https://github.com/whileTrueFalse/WinClock/releases/tag/" + g_updTag).c_str(), nullptr, nullptr, SW_SHOWNORMAL); return; }
     if (r != IDYES) return;
     NetStart(NET_DOWNLOAD, L"https://github.com/whileTrueFalse/WinClock/releases/download/" + g_updTag + L"/WinClock.exe");
@@ -425,8 +425,8 @@ static void HandleNet(NetJob* j) {
                 g_balloonUpdate = true;
             }
         } else if (j->kind == NET_UPDATE_MANUAL) {
-            if (tag.empty()) MessageBoxW(nullptr, L"Couldn't check for updates right now. Please try again later.", L"WinClock", MB_OK | MB_ICONINFORMATION);
-            else MessageBoxW(nullptr, L"You're up to date (WinClock " APP_VERSION L").", L"WinClock", MB_OK | MB_ICONINFORMATION);
+            if (tag.empty()) MessageBoxW(nullptr, L"Couldn't check for updates right now. Please try again later.", L"WinClock", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
+            else MessageBoxW(nullptr, L"You're up to date (WinClock " APP_VERSION L").", L"WinClock", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST);
         }
     }
     delete j;
